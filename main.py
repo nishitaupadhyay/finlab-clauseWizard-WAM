@@ -11,7 +11,7 @@ import json
 load_dotenv(find_dotenv())
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}})
+CORS(app, supports_credentials=True)
 
 llm_config = {
     "model": "gpt-4",
