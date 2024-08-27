@@ -1,3 +1,4 @@
+from typing import Any
 def get_clients(city: str = None, client_name: str = None) -> Any:
     database = {
         "Boston": [
