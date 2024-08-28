@@ -14,42 +14,75 @@ app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
 llm_config = {
-    "model": "gpt-4",
+    "model": "gpt-3.5-turbo",
     "api_key": os.environ["OPENAI_API_KEY"],
     "base_url": os.environ["OPENAI_BASE_URL"],
     "temperature": 0,
     "timeout": 120,
 }
 
+simple_input = [
+  {
+    "name": "Lawrence Summers",
+    "age": 55,
+    "profession": "Professor",
+    "affiliation": "Harvard University",
+    "active_tiaa_member": True,
+    "invested_assets": 180000,
+    "last_contacted_days": 15,
+    "details": "Lawrence appears to be 10 years from retirement and is estimated to have $40k in investable assets that are not invested in TIAA. Lawrence has been with TIAA for over three years an favors an aggressive risk profile and passive management. Of the assets with TIAA, they appear to draw from a broad array of fund managers, including both TIAA-affiliated and outside funds."
+  }
+]
+
+
 # Create the assistant agent
 assistant = AssistantAgent(
     name="wealth_management_advisor",
     llm_config=llm_config,
     system_message="""
-     You are a wealth management advisor who provides financial advice. Your responses should be concise and informative.
-        You are capable of understanding and responding to a wide range of financial queries.
-        When asked who to contact in a given city, use the get_clients tool in order to find clients.
-        Once you have the clients, respond by showing the clients in a bulleted list telling the 
-        user only their name, age, profession, affiliation, whether or not they are an active TIAA member, 
-        and how much they have invested and you should then ask the user if they want to learn more about each client or 
-        if they want you to draft an email to them.
+You are a wealth management advisor providing concise and informative financial advice. Follow these guidelines:
+ Greeting:
+   - When the conversation starts or if the user sends a greeting, respond with a polite welcome message without making any tool calls.
+   - Ask how you can assist them with their wealth management needs.
 
-        When asked about a specific client, use the get_clients_tool client's details.
-        Once you have the client details, respond by showing the information in a clear, organized manner.
 
-        If asked to draft an email, use the send_email_gmail tool to send a professional email to the clients.
-        Note that you'll need to ask the user for the client's email address as it's not provided in the client data.
-        The email should ask them what times they are available to discuss their financial investments. 
-        
-        If asked to tell the user more about a specific client, you should use the details section in the response you received earlier from the get_clients tool.
-        If asked to suggest topics for a meeting, then tell the user that they should consider 
-        1) Exploring the benefits of TIAA-affiliated funds over outside funds 
-        2) Revisiting their high risk profile to manage downside risk as they approach decumulation 
-        3) Tax minimization. You should tailor those topics to each client by paying attention to their age and the amount they have invested as well as their preferred strategies mentioned in their client details.
-        Once you have suggested topics for a meeting, ask the user if they would like you to prepare materials for that meeting.
-        If they say yes, generate a more detailed report on the topics suggested by assuming information that would be typical for that client given their profile.
-        If they say there is nothing else to discuss or do then reply with 'TERMINATE'
-    """
+1. City-wide client queries:
+   - Use the get_clients tool to retrieve client information.
+   - Respond with a bulleted list of each client's name, age, profession, affiliation, TIAA membership status, and invested assets.
+   - Ask if the user wants more details or an email draft for a specific client.
+
+2. Specific client queries:
+   - If asked about a specific client, first check if their information is available in the most recent get_clients tool results.
+   - If available, provide a detailed summary of the client's information, including all available details (name, age, profession, affiliation, TIAA membership status, invested assets, last contact, and any additional details).
+   - If not available, use the get_clients tool with the client's name as a parameter to retrieve their information.
+
+3. Email drafting:
+    - When asked to draft an email, FIRST respond by asking for the client's email address. Do not proceed with drafting or sending an email until the email address is explicitly provided by the user.
+   - Once the email address is provided, use the send_email_gmail tool to compose and send the email.
+   - Compose a professional email inquiring about the client's availability to discuss their investments.
+
+4. Meeting topics:
+   - Suggest the following based on the client's profile:
+     a) Benefits of TIAA-affiliated vs. outside funds
+     b) Revisiting risk profiles to manage downside risk, especially for clients nearing retirement
+     c) Tax minimization strategies
+   - Tailor topics based on the client's age, invested amount, and known preferences.
+
+5. Detailed reports:
+   - If asked, offer to prepare a detailed report based on the client's profile.
+   - Generate the report using available data and typical scenarios for similar client profiles.
+
+6. Error handling:
+   - If you encounter any issues retrieving or processing client data, inform the user politely and suggest alternatives or ask for clarification.
+
+7. Conversation flow:
+   - Always maintain a professional and helpful tone.
+   - After each interaction, ask if there's anything else the user needs assistance with.
+   - If no further actions are needed, respond with 'TERMINATE.'
+
+Remember to respect client privacy and only use the information provided through the appropriate tools.
+"""
+
 )
 
 # Create the user proxy agent
@@ -120,11 +153,27 @@ register_function(
 #             return "I'm sorry, I couldn't process that request."
 #     return "I'm sorry, I couldn't process that request."
 
+
+temp_input = [
+  {
+    "name": "Lawrence Summers",
+    "age": 55,
+    "profession": "Professor",
+    "affiliation": "Harvard University",
+    "active_tiaa_member": True,
+    "invested_assets": 180000,
+    "last_contacted_days": 15,
+    "details": "Lawrence appears to be 10 years from retirement and is estimated to have $40k in investable assets that are not invested in TIAA. Lawrence has been with TIAA for over three years an favors an aggressive risk profile and passive management. Of the assets with TIAA, they appear to draw from a broad array of fund managers, including both TIAA-affiliated and outside funds."
+  }
+]
+# A global dictionary to simulate memory
+session_memory = {}
+
 def process_response(response):
     if isinstance(response, str):
         return response
     elif isinstance(response, dict):
-        print("RESPONSE", response)
+        # print("RESPONSE", response)
         if response.get('content'):
             return response['content']
         elif response.get('tool_calls'):
@@ -133,8 +182,16 @@ def process_response(response):
                 if call['function']['name'] == 'get_clients_tool':
                     args = json.loads(call['function']['arguments'])
                     city = args.get('city')
-                    clients = get_clients(city=city)
+
+                    # Check if clients for the city are already stored in session memory
+                    if city in session_memory:
+                        clients = session_memory[city]
+                    else:
+                        clients = get_clients(city=city)
+                        session_memory[city] = clients  # Store in memory
+
                     tool_results.append(clients)
+
                 elif call['function']['name'] == 'send_email_gmail':
                     args = json.loads(call['function']['arguments'])
                     recipient_email = args.get('recipient_email')
@@ -145,6 +202,7 @@ def process_response(response):
 
             if tool_results:
                 tool_response = json.dumps(tool_results, indent=2)
+                # print("Sending to agent:", tool_response)
                 user_proxy.send(tool_response, assistant)
                 final_response = assistant.generate_reply(user_proxy.chat_messages[assistant], sender=user_proxy)
                 return process_response(final_response)
@@ -152,21 +210,26 @@ def process_response(response):
             return "I'm sorry, I couldn't process that request."
     return "I'm sorry, I couldn't process that request."
 
+
 @app.route('/chat', methods=['POST'])
 def chat():
+    # print("session memory", session_memory)
     data = request.json
     user_input = data.get('message', '').strip()
+    print("User input:", user_input)
 
     if not user_input:
         return jsonify({"response": "It seems you didn't type anything. Please enter your message."}), 400
-
+    
+    # print("User input:", user_input)
     user_proxy.send(user_input, assistant)
     assistant_response = assistant.generate_reply(
         user_proxy.chat_messages[assistant], sender=user_proxy
     )
-
+    print("Assistant response:", assistant_response)
     processed_response = process_response(assistant_response)
     user_proxy.receive(processed_response, assistant)
+    # print("Processed response:", processed_response)
 
     return jsonify({'response': processed_response})
 
