@@ -21,99 +21,104 @@ llm_config = {
     "timeout": 120,
 }
 
-simple_input = [
-  {
-    "name": "Lawrence Summers",
-    "age": 55,
-    "profession": "Professor",
-    "affiliation": "Harvard University",
-    "active_tiaa_member": True,
-    "invested_assets": 180000,
-    "last_contacted_days": 15,
-    "details": "Lawrence appears to be 10 years from retirement and is estimated to have $40k in investable assets that are not invested in TIAA. Lawrence has been with TIAA for over three years an favors an aggressive risk profile and passive management. Of the assets with TIAA, they appear to draw from a broad array of fund managers, including both TIAA-affiliated and outside funds."
-  }
-]
-
-
-# Create the assistant agent
-assistant = AssistantAgent(
-    name="wealth_management_advisor",
+# Agent 1: Client Management Agent
+client_management_agent = AssistantAgent(
+    name="client_management_agent",
     llm_config=llm_config,
     system_message="""
-    You are a wealth management advisor who provides financial advice. Your responses should be concise and informative.
-    You are capable of understanding and responding to a wide range of financial queries when asked about a specific client.
-    Follow these guidelines:
-
-    1. Client Queries:
-        - City-wide: Use get_clients tool. List client name, age, profession, affiliation, TIAA status, invested assets. Offer more details/email draft.
-        - Specific: Check recent tool results first. If unavailable, use get_clients tool with name. Provide full client details.
-
-     2. Email Process:
-        -When asked to draft an email: use get_clients tool to get client email.
-        - Include tailored topics: TIAA vs. outside funds, risk profiles, tax strategies in the drafted email 
-        - Present draft to the user with "Here's a draft of the email:" prefix.
-        - Ask user for edits, incorporate if provided.
-        - Get explicit confirmation before sending.
-        - Use send_email_gmail tool only after receiving explicit confirmation.
-        - Inform user of successful sending.
-
-    3. General:
-        - Handle errors politely, suggest alternatives.
-        - Maintain professional tone.
-        - Ask if user needs more assistance after each interaction.
-        - When discussing investments with clients:
-          * Emphasize that to achieve desired rates of return, investing solely in bonds may not be sufficient.
-          * If clients express concerns about diversification, highlight that TIAA engages in extensive diversification efforts through its investments, ensuring that TIAA funds can meet portfolio risk diversification goals.
-          * Encourage clients to consider investing their remaining available assets into TIAA, emphasizing the benefits of consolidation and TIAA's diversification strategies.
-
-    Respect client privacy. Use only provided tool information.
-"""
-
+    You are responsible for managing client information. 
+    Your tasks include retrieving and providing details about clients based on their location or specific name.
+    Do that using the get_clients tool.
+    Only share the name and age when asked about clinets in a city but include everything when asked about a specific client.
+    """,
 )
 
-# Create the user proxy agent
+# Agent 2: Email Drafting Agent
+email_drafting_agent = AssistantAgent(
+    name="email_drafting_agent",
+    llm_config=llm_config,
+    system_message="""
+    You are responsible for drafting, editing, and sending emails to clients based on their financial information and queries. 
+
+    IMPORTANT!! ALWAYS FOLLOW THESE STEPS:
+
+    1. Draft an email tailored to the client's specific needs, including topics such as:
+       - TIAA vs. outside funds
+       - Risk profiles
+       - Tax strategies
+
+    2. Present the draft to the user with the prefix "Here's a draft of the email:"
+
+    3. Ask the user if they would like to make any edits to the draft.
+
+    4. If the user provides edits, incorporate them into the email.
+
+    5. Present the final version of the email and ask for explicit confirmation to send it.
+
+    6. ONLY proceed with sending the email using the  send_email_gmail function after receiving explicit confirmation from the user.
+
+
+    """,
+)
+
+# Agent 3: Investment Advice Agent
+investment_advice_agent = AssistantAgent(
+    name="investment_advice_agent",
+    llm_config=llm_config,
+    system_message="""
+    You are responsible for providing investment advice to clients based on their financial details. 
+    Get the client details from get_clients tool, and the suggest the below 
+    Your primary goal is to convince clients to invest their remaining available assets into TIAA.
+    Key points to emphasize:
+    1. To achieve desired rates of return, clients can't rely solely on bonds.
+    2. TIAA engages in extensive diversification efforts through its investments.
+    3. TIAA funds can meet required portfolio risk diversification goals.
+    4. Be prepared to address common client objections and concerns.
+    Remember to be persuasive but also respectful of the client's concerns and financial goals.
+    """,
+)
+
+# User Proxy Agent
 user_proxy = UserProxyAgent(
     name="user_proxy",
     human_input_mode="NEVER",
-    max_consecutive_auto_reply=0,
-    is_termination_msg=lambda x: x.get("content", "") and x.get("content", "").rstrip().endswith("TERMINATE"),
-    code_execution_config={
+     code_execution_config={
         "work_dir": "market",
         "use_docker": False,
     },
+    max_consecutive_auto_reply=0,
+    is_termination_msg=lambda x: x.get("content", "") and x.get("content", "").rstrip().endswith("TERMINATE"),
 )
 
+# Registering functions with specific agents
 register_function(
     get_clients,
-    caller=assistant,
+    caller=client_management_agent,
     executor=user_proxy,
     name="get_clients_tool",  
-    description="This tool is used to look up the clients that the user should reach out to if they are visiting the provided city.",
+    description="This tool is used to look up clients based on the provided city or client name.",
 )
-
 
 register_function(
     send_email_gmail,
-    caller=assistant,
+    caller=email_drafting_agent,
     executor=user_proxy,
     name="send_email_gmail",
     description="This tool is used to send an email using Gmail SMTP, with the option to mask the sender as a company email.",
 )
 
-
 # A global dictionary to simulate memory
 session_memory = {}
-
-
-
-def process_response(response):
+email_state = {}
+def process_response(agent, response, user_input):
+    global email_state
+    
     if isinstance(response, str):
         return response
     elif isinstance(response, dict):
         if response.get('content'):
             return response['content']
         elif response.get('tool_calls'):
-            tool_results = []
             for call in response['tool_calls']:
                 if call['function']['name'] == 'get_clients_tool':
                     args = json.loads(call['function']['arguments'])
@@ -122,52 +127,159 @@ def process_response(response):
                         clients = session_memory[city]
                     else:
                         clients = get_clients(city=city)
-                        session_memory[city] = clients  # Store in memory
-
-                    tool_results.append(clients)
+                        session_memory[city] = clients
+                    return json.dumps(clients, indent=2)
 
                 elif call['function']['name'] == 'send_email_gmail':
                     args = json.loads(call['function']['arguments'])
-                    recipient_email = args.get('recipient_email')
-                    subject = args.get('subject')
-                    body = args.get('body')
+                    if not email_state.get('draft'):
+                        email_state = {
+                            'draft': True,
+                            'recipient_email': args.get('recipient_email'),
+                            'subject': args.get('subject'),
+                            'body': args.get('body')
+                        }
+                        return f"Here's a draft of the email:\n\nTo: {email_state['recipient_email']}\nSubject: {email_state['subject']}\n\n{email_state['body']}\n\nWould you like to send this email? (Yes/No)"
+    
+    # Handle user confirmation outside of the response processing
+    if email_state.get('draft'):
+        if user_input.lower() == 'yes':
+            try:
+                result = send_email_gmail(email_state['recipient_email'], email_state['subject'], email_state['body'])
+                email_state = {}  # Reset the email state
+                return f"Email sent successfully. {result}"
+            except Exception as e:
+                email_state = {}  # Reset the email state
+                return f"An error occurred while sending the email: {str(e)}"
+        elif user_input.lower() == 'no':
+            return "Okay, what would you like to change in the email?"
+        else:
+            return "Please respond with 'Yes' to send the email or 'No' to edit it."
 
-                    result = send_email_gmail(recipient_email, subject, body)
-                    tool_results.append(result)
-            if tool_results:
-                tool_response = json.dumps(tool_results, indent=2)
-                user_proxy.send(tool_response, assistant)
-                final_response = assistant.generate_reply(user_proxy.chat_messages[assistant], sender=user_proxy)
-                return process_response(final_response)
-                
-
-            return "I'm sorry, I couldn't process that request."
     return "I'm sorry, I couldn't process that request."
 
+# def process_response(agent, response, user_input):
+#     global email_state
+    
+#     if isinstance(response, str):
+#         return response
+#     elif isinstance(response, dict):
+#         if response.get('content'):
+#             return response['content']
+#         elif response.get('tool_calls'):
+#             for call in response['tool_calls']:
+#                 if call['function']['name'] == 'get_clients_tool':
+#                     args = json.loads(call['function']['arguments'])
+#                     city = args.get('city')
+#                     if city in session_memory:
+#                         clients = session_memory[city]
+#                     else:
+#                         clients = get_clients(city=city)
+#                         session_memory[city] = clients
+#                     return json.dumps(clients, indent=2)
+
+#                 elif call['function']['name'] == 'send_email_gmail':
+#                     args = json.loads(call['function']['arguments'])
+#                     if not email_state.get('draft'):
+#                         email_state = {
+#                             'draft': True,
+#                             'recipient_email': args.get('recipient_email'),
+#                             'subject': args.get('subject'),
+#                             'body': args.get('body')
+#                         }
+#                         return f"Here's a draft of the email:\n\nTo: {email_state['recipient_email']}\nSubject: {email_state['subject']}\n\n{email_state['body']}\n\nWould you like to send this email? (Yes/No)"
+    
+#     # Handle user confirmation outside of the response processing
+#     if email_state.get('draft') and user_input.lower() == 'yes':
+#         try:
+#             result = send_email_gmail(email_state['recipient_email'], email_state['subject'], email_state['body'])
+#             email_state = {}  # Reset the email state
+#             return f"Email sent successfully. {result}"
+#         except Exception as e:
+#             email_state = {}  # Reset the email state
+#             return f"An error occurred while sending the email: {str(e)}"
+#     elif email_state.get('draft'):
+#         email_state = {}  # Reset the email state
+#         return "Email sending cancelled. What else can I help you with?"
+
+#     return "I'm sorry, I couldn't process that request."
+
+# Update the chat route
+# @app.route('/chat', methods=['POST'])
+# def chat():
+    # global email_state
+    # data = request.json
+    # user_input = data.get('message', '').strip()
+    # print("User input:", user_input)
+
+    # if not user_input:
+    #     return jsonify({"response": "It seems you didn't type anything. Please enter your message."}), 400
+
+    # if email_state.get('draft'):
+    #     # If we have a draft, we don't need to call the AI model again
+    #     processed_response = process_response(None, None, user_input)
+    # else:
+    #     if "client" in user_input.lower():
+    #         agent = client_management_agent
+    #     elif "email" in user_input.lower():
+    #         agent = email_drafting_agent
+    #     elif "investment" in user_input.lower():
+    #         agent = investment_advice_agent
+    #     else:
+    #         return jsonify({"response": "Please specify whether you're asking about a client, email, or investment."}), 400
+
+    #     user_proxy.send(user_input, agent)
+    #     agent_response = agent.generate_reply(
+    #         user_proxy.chat_messages[agent], sender=user_proxy
+    #     )
+    #     print(f"{agent.name} response:", agent_response)
+    #     processed_response = process_response(agent, agent_response, user_input)
+
+    # user_proxy.receive(processed_response, agent)
+    # return jsonify({'response': processed_response})
 
 @app.route('/chat', methods=['POST'])
 def chat():
+    global email_state
     data = request.json
     user_input = data.get('message', '').strip()
     print("User input:", user_input)
 
     if not user_input:
         return jsonify({"response": "It seems you didn't type anything. Please enter your message."}), 400
-    
-    user_proxy.send(user_input, assistant)
-    assistant_response = assistant.generate_reply(
-        user_proxy.chat_messages[assistant], sender=user_proxy
-    )
-    print("Assistant response:", assistant_response)
-    processed_response = process_response(assistant_response)
-    user_proxy.receive(processed_response, assistant)
 
-    return jsonify({'response': processed_response})
+    if email_state.get('draft'):
+        # If we have a draft, we don't need to call the AI model again
+        processed_response = process_response(None, None, user_input)
+        # Clear the email state if the user doesn't want to send the email
+        if user_input.lower() != 'yes':
+            email_state = {}
+        return jsonify({'response': processed_response})
+    else:
+        if "client" in user_input.lower() or "Boston" in user_input.lower():
+            agent = client_management_agent
+        elif "email" in user_input.lower():
+            agent = email_drafting_agent
+        elif "discussion" in user_input.lower() or "investment" in user_input.lower():
+            agent = investment_advice_agent
+        else:
+            return jsonify({"response": "Please specify whether you're asking about a client, email, or investment."}), 400
 
-@app.route('/reset', methods=['POST'])
+        user_proxy.send(user_input, agent)
+        agent_response = agent.generate_reply(
+            user_proxy.chat_messages[agent], sender=user_proxy
+        )
+        print(f"{agent.name} response:", agent_response)
+        processed_response = process_response(agent, agent_response, user_input)
+        user_proxy.receive(processed_response, agent)
+        return jsonify({'response': processed_response})
+
+@app.route('/reset', methods=['GET'])
 def reset_conversation():
     user_proxy.reset()
-    assistant.reset()
+    client_management_agent.reset()
+    email_drafting_agent.reset()
+    investment_advice_agent.reset()
     return jsonify({"message": "Conversation reset successfully"})
 
 if __name__ == '__main__':
