@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from autogen import AssistantAgent, UserProxyAgent, ConversableAgent
 from dotenv import load_dotenv, find_dotenv
@@ -10,8 +10,9 @@ import json
 
 load_dotenv(find_dotenv())
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='build/static', template_folder='build')
 CORS(app, supports_credentials=True)
+
 
 llm_config = {
     "model": "gpt-3.5-turbo",
@@ -286,6 +287,22 @@ def reset_conversation():
 @app.route('/health', methods=['GET'])
 def health_check():
     return '', 200
+
+
+# Serve static files from the 'static' directory
+@app.route('/')
+def serve_root():
+    return send_from_directory(app.static_folder, 'index.html')
+
+# Catch-all route for client-side routing (like React)
+@app.route('/<path:full_path>')
+def serve_app(full_path):
+    file_path = os.path.join(app.static_folder, full_path)
+    if os.path.isfile(file_path):
+        return send_from_directory(app.static_folder, full_path)
+    else:
+        # If the requested file doesn't exist, serve index.html (for client-side routing)
+        return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
     app.run(debug=True)
