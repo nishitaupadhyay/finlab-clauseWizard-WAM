@@ -282,5 +282,10 @@ def reset_conversation():
     investment_advice_agent.reset()
     return jsonify({"message": "Conversation reset successfully"})
 
+
+@app.route('/health/', methods=['GET'])
+def health_check():
+    return '', 200
+
 if __name__ == '__main__':
     app.run(debug=True)
