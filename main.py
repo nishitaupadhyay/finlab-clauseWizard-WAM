@@ -10,7 +10,7 @@ import json
 
 load_dotenv(find_dotenv())
 
-app = Flask(__name__, static_folder='build/static', template_folder='build')
+app = Flask(__name__, static_folder='static', template_folder='static')
 CORS(app, supports_credentials=True)
 
 
@@ -159,86 +159,6 @@ def process_response(agent, response, user_input):
 
     return "I'm sorry, I couldn't process that request."
 
-# def process_response(agent, response, user_input):
-#     global email_state
-    
-#     if isinstance(response, str):
-#         return response
-#     elif isinstance(response, dict):
-#         if response.get('content'):
-#             return response['content']
-#         elif response.get('tool_calls'):
-#             for call in response['tool_calls']:
-#                 if call['function']['name'] == 'get_clients_tool':
-#                     args = json.loads(call['function']['arguments'])
-#                     city = args.get('city')
-#                     if city in session_memory:
-#                         clients = session_memory[city]
-#                     else:
-#                         clients = get_clients(city=city)
-#                         session_memory[city] = clients
-#                     return json.dumps(clients, indent=2)
-
-#                 elif call['function']['name'] == 'send_email_gmail':
-#                     args = json.loads(call['function']['arguments'])
-#                     if not email_state.get('draft'):
-#                         email_state = {
-#                             'draft': True,
-#                             'recipient_email': args.get('recipient_email'),
-#                             'subject': args.get('subject'),
-#                             'body': args.get('body')
-#                         }
-#                         return f"Here's a draft of the email:\n\nTo: {email_state['recipient_email']}\nSubject: {email_state['subject']}\n\n{email_state['body']}\n\nWould you like to send this email? (Yes/No)"
-    
-#     # Handle user confirmation outside of the response processing
-#     if email_state.get('draft') and user_input.lower() == 'yes':
-#         try:
-#             result = send_email_gmail(email_state['recipient_email'], email_state['subject'], email_state['body'])
-#             email_state = {}  # Reset the email state
-#             return f"Email sent successfully. {result}"
-#         except Exception as e:
-#             email_state = {}  # Reset the email state
-#             return f"An error occurred while sending the email: {str(e)}"
-#     elif email_state.get('draft'):
-#         email_state = {}  # Reset the email state
-#         return "Email sending cancelled. What else can I help you with?"
-
-#     return "I'm sorry, I couldn't process that request."
-
-# Update the chat route
-# @app.route('/chat', methods=['POST'])
-# def chat():
-    # global email_state
-    # data = request.json
-    # user_input = data.get('message', '').strip()
-    # print("User input:", user_input)
-
-    # if not user_input:
-    #     return jsonify({"response": "It seems you didn't type anything. Please enter your message."}), 400
-
-    # if email_state.get('draft'):
-    #     # If we have a draft, we don't need to call the AI model again
-    #     processed_response = process_response(None, None, user_input)
-    # else:
-    #     if "client" in user_input.lower():
-    #         agent = client_management_agent
-    #     elif "email" in user_input.lower():
-    #         agent = email_drafting_agent
-    #     elif "investment" in user_input.lower():
-    #         agent = investment_advice_agent
-    #     else:
-    #         return jsonify({"response": "Please specify whether you're asking about a client, email, or investment."}), 400
-
-    #     user_proxy.send(user_input, agent)
-    #     agent_response = agent.generate_reply(
-    #         user_proxy.chat_messages[agent], sender=user_proxy
-    #     )
-    #     print(f"{agent.name} response:", agent_response)
-    #     processed_response = process_response(agent, agent_response, user_input)
-
-    # user_proxy.receive(processed_response, agent)
-    # return jsonify({'response': processed_response})
-
 @app.route('/chat', methods=['POST'])
 def chat():
     global email_state
@@ -289,20 +209,21 @@ def health_check():
     return '', 200
 
 
-# Serve static files from the 'static' directory
 @app.route('/')
 def serve_root():
+    print("Static folder path:", app.static_folder)  # Check the folder
+    print("Index.html exists:", os.path.isfile(os.path.join(app.static_folder, 'index.html')))  # Check the file
     return send_from_directory(app.static_folder, 'index.html')
 
-# Catch-all route for client-side routing (like React)
 @app.route('/<path:full_path>')
 def serve_app(full_path):
     file_path = os.path.join(app.static_folder, full_path)
     if os.path.isfile(file_path):
         return send_from_directory(app.static_folder, full_path)
     else:
-        # If the requested file doesn't exist, serve index.html (for client-side routing)
         return send_from_directory(app.static_folder, 'index.html')
 
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=5000)
+
