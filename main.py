@@ -27,9 +27,9 @@ client_management_agent = AssistantAgent(
     llm_config=llm_config,
     system_message="""
     You are responsible for managing client information. 
-    Your tasks include retrieving and providing details about clients based on their location or specific name.
-    Do that using the get_clients tool.
-    Only share the name and age when asked about clinets in a city but include everything when asked about a specific client.
+    When asked who to contact in a given city, use the get_clients tool in order to find clients.
+    Once you have the clients, respond by showing the clients in a bulleted list telling the user their name, age, profession, affiliation, and how much they have invested. 
+    You should then ask the user if they want to learn more about each client or if they want you to draft an email to them.
     """,
 )
 
@@ -43,7 +43,7 @@ email_drafting_agent = AssistantAgent(
     IMPORTANT!! ALWAYS FOLLOW THESE STEPS:
 
     1. Draft an email tailored to the client's specific needs, including topics such as:
-       - TIAA vs. outside funds
+       - The Fund vs. outside funds
        - Risk profiles
        - Tax strategies
 
@@ -68,11 +68,11 @@ investment_advice_agent = AssistantAgent(
     system_message="""
     You are responsible for providing investment advice to clients based on their financial details. 
     Get the client details from get_clients tool, and the suggest the below 
-    Your primary goal is to convince clients to invest their remaining available assets into TIAA.
+    Your primary goal is to convince clients to invest their remaining available assets into The Fund.
     Key points to emphasize:
     1. To achieve desired rates of return, clients can't rely solely on bonds.
-    2. TIAA engages in extensive diversification efforts through its investments.
-    3. TIAA funds can meet required portfolio risk diversification goals.
+    2. The Fund engages in extensive diversification efforts through its investments.
+    3. The Fund can meet required portfolio risk diversification goals.
     4. Be prepared to address common client objections and concerns.
     Remember to be persuasive but also respectful of the client's concerns and financial goals.
     """,
@@ -256,11 +256,11 @@ def chat():
             email_state = {}
         return jsonify({'response': processed_response})
     else:
-        if "client" in user_input.lower() or "Boston" in user_input.lower():
+        if "client" in user_input.lower() or "Boston" in user_input.lower() or "Hello" in user_input.lower():
             agent = client_management_agent
         elif "email" in user_input.lower():
             agent = email_drafting_agent
-        elif "discussion" in user_input.lower() or "investment" in user_input.lower():
+        elif "discussion" in user_input.lower() or "investment" in user_input.lower() or "invest" in user_input.lower() :
             agent = investment_advice_agent
         else:
             return jsonify({"response": "Please specify whether you're asking about a client, email, or investment."}), 400
