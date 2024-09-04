@@ -283,7 +283,7 @@ def reset_conversation():
     return jsonify({"message": "Conversation reset successfully"})
 
 
-@app.route('/health/', methods=['GET'])
+@app.route('/health', methods=['GET'])
 def health_check():
     return '', 200
 
