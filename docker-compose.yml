@@ -1,0 +1,16 @@
+name: ss-outpost
+
+services:
+  app:
+    image: "mckinsey-finlab-spaceship-docker-local.jfrog.io/outpost:latest"
+    pull_policy: always
+    container_name: ss-app
+    stdin_open: true
+    tty: true
+    environment:
+      - "ssUrl=${SS_URL:-https://poll.mckinsey-hybrid-dev.io}"
+      - "ssLogLevel=${ssLogLevel:-INFO}"
+      - "authCode=${authCode:-}"
+      - "embeddedDB=${embeddedDB:-false}"
+    env_file:
+      - .env
