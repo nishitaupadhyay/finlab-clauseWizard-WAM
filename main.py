@@ -1,9 +1,10 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from autogen import AssistantAgent, UserProxyAgent, ConversableAgent
+from autogen.agentchat.assistant_agent import AssistantAgent
+from autogen.agentchat.user_proxy_agent import UserProxyAgent
 from dotenv import load_dotenv, find_dotenv
+from autogen.agentchat.conversable_agent import register_function
 from tools import get_clients  # Import the data access function
-from autogen import register_function
 from email_sender import send_email_gmail  # Import the email function
 import os
 import json
