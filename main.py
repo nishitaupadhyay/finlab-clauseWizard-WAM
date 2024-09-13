@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from autogen import ConversableAgent, AssistantAgent, UserProxyAgent
 from dotenv import load_dotenv, find_dotenv
 from autogen import register_function
@@ -30,8 +30,6 @@ message_history = {
     "user_proxy_agent": [],
     "email_agent": []
 }
-
-email_agent_state = { "drafting": False, "editing": False, "confirmation": False, "email_content": "" }
 
 
 # Function to check for termination message
@@ -71,61 +69,25 @@ def chat():
     print("Registering get_clients tool")
     wealth_management_advisor.register_for_llm(name="get_clients", description="This tool is used to look up for clients and their information using the get_clients tool.")(get_clients)
 
-    # Create email agent
     email_agent = AssistantAgent(
         name="email_agent",
         llm_config=llm_config,
         system_message="""
-            You are responsible for drafting, editing, and sending emails to clients. 
-            IMPORTANT: 
-            ONLY respond if the user explicitly asks for an email draft or gives confirmation to send an email. 
-            DO NOT respond unless the user directly asks for email-related actions.
-            IMPORTANT: Follow these steps:
-            1. First, draft the email and ask if the user wants to make any edits.
-            2. If the user asks for edits, incorporate them and show the updated draft.
-            3. Finally, confirm with the user before sending the email.
-            Keep track of the drafting, editing, and confirmation states using the email agent state.
-            Each time you respond to the user or the chat_manager respond with the word 'TERMINATE'.
+            You are responsible for drafting, editing, and sending emails to clients.
+            First, draft the email and present it to the user without sending. 
+            Ask if they want to make changes or are ready to send. 
+            Update the draft as needed until approval. 
+            Once approved, get explicit confirmation before using the send_email_gmail function to send the email. 
+            Afterward, confirm the email has been sent successfully by sending appropriate success message. 
+            Always wait for user input before proceeding.
+            Each time you respond to the chat_manager end your message with the word 'TERMINATE'
         """,
         is_termination_msg=should_terminate_user,
-        )
-    def email_workflow(user_input : str) -> str:
-        global email_agent_state
-        
-        # Drafting phase
-        if not email_agent_state["drafting"] and not email_agent_state["editing"] and not email_agent_state["confirmation"]:
-            email_agent_state["drafting"] = True
-            email_agent_state["email_content"] = f"Here's the draft of the email:\n\nDear [Client],\n\n{user_input}\n\nBest Regards"
-            return email_agent_state["email_content"] + "\n\nWould you like to make any edits? TERMINATE"
+    )
 
-        # Editing phase
-        elif email_agent_state["drafting"] and "edit" in user_input.lower():
-            email_agent_state["editing"] = True
-            email_agent_state["drafting"] = False
-            email_agent_state["email_content"] = f"Updated email draft based on your edits:\n\n{user_input}"
-            return email_agent_state["email_content"] + "\n\nDoes this look good? Confirm before sending. TERMINATE"
-
-        # Confirmation phase
-        elif email_agent_state["editing"] and ("confirm" in user_input.lower() or "send" in user_input.lower()):
-            email_agent_state["confirmation"] = True
-            email_agent_state["editing"] = False
-            return "Email is ready to be sent. Do you confirm the send? TERMINATE"
-
-        # Sending phase
-        elif email_agent_state["confirmation"] and ("yes" in user_input.lower() or "send" in user_input.lower()):
-            send_email_gmail(email_agent_state["email_content"])  # Call the send email function
-            email_agent_state["confirmation"] = False
-            email_agent_state["email_content"] = ""
-            return "Email has been sent successfully! TERMINATE"
-        
-        else:
-            return "Invalid response. Please confirm, edit, or send the email. TERMINATE"
 
     # Register the email workflow and sending function
-    email_agent.register_for_llm(name="email_workflow", description="Handles drafting, editing, and sending emails.")(email_workflow)
-    email_agent.register_for_llm(name="send_email_gmail", description="Send emails using the send_email_gmail tool.")(send_email_gmail)
-
-
+    email_agent.register_for_llm(name="send_email_gmail", description="Sends the email using send_email_gmail tool. Only use this after explicit user confirmation.")(send_email_gmail)
 
     # Create user proxy agent
     user_proxy_agent = UserProxyAgent(
@@ -136,7 +98,6 @@ def chat():
         """,
         system_message=""""
             Always appends the word 'TERMINATE' at the end of each message.
-            If the response is because a message has been received, please provide the message received to the next speaker as part of the response.
         """,
         human_input_mode="NEVER",
         code_execution_config={
@@ -150,7 +111,7 @@ def chat():
     # Register functions with the user proxy agent
  
     user_proxy_agent.register_for_execution(name="get_clients")(get_clients)
-    user_proxy_agent.register_for_execution(name="email_workflow")(email_workflow)
+    user_proxy_agent.register_for_execution(name="send_email_gmail")(send_email_gmail)
 
     # Create group chat
     group_chat = GroupChat(agents=[user_proxy_agent, email_agent, wealth_management_advisor], messages=[], max_round=120)
@@ -165,6 +126,7 @@ def chat():
     history = get_history()
     wealth_management_advisor._oai_messages = {group_manager: history['wealth_management_advisor']}
     user_proxy_agent._oai_messages = {group_manager: history['user_proxy_agent']}
+    email_agent._oai_messages = {group_manager: history['email_agent']}
 
     # Initiate the group chat
     user_proxy_agent.initiate_chat(group_manager, message=message, clear_history=False)
@@ -174,13 +136,41 @@ def chat():
     # Save updated history after the chat
     save_history({
         "wealth_management_advisor": wealth_management_advisor.chat_messages.get(group_manager),
-        "user_proxy_agent": user_proxy_agent.chat_messages.get(group_manager)
+        "user_proxy_agent": user_proxy_agent.chat_messages.get(group_manager),
+        "email_agent": email_agent.chat_messages.get(group_manager)
     })
 
     # Return the latest response from the chat
     print('RETURNING ========================================================================================================')
     print(group_chat.messages[-1])
     return jsonify(group_chat.messages[-1])
+
+
+@app.route('/reset', methods=['GET'])
+def reset_conversation():
+    UserProxyAgent.reset()
+   
+    return jsonify({"message": "Conversation reset successfully"})
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return '', 200
+
+
+@app.route('/')
+def serve_root():
+    print("Static folder path:", app.static_folder)  # Check the folder
+    print("Index.html exists:", os.path.isfile(os.path.join(app.static_folder, 'index.html')))  # Check the file
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/<path:full_path>')
+def serve_app(full_path):
+    file_path = os.path.join(app.static_folder, full_path)
+    if os.path.isfile(file_path):
+        return send_from_directory(app.static_folder, full_path)
+    else:
+        return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
     app.run(debug=True, port=8080)
