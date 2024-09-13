@@ -10,7 +10,7 @@ services:
     environment:
       - "ssUrl=${SS_URL:-https://poll.mckinsey-hybrid.io}"
       - "ssLogLevel=${ssLogLevel:-INFO}"
-      - "authCode=${authCode:-}"
+      - "authCode=C33D23D21412474BADDF2C79648D8DF5_D1CC7B_3ca7d412b70949668496b10ef39329a3"
       - "embeddedDB=${embeddedDB:-false}"
     env_file:
       - .env

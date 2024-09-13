@@ -1,230 +1,167 @@
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
-from autogen.agentchat.assistant_agent import AssistantAgent
-from autogen.agentchat.user_proxy_agent import UserProxyAgent
-from dotenv import load_dotenv, find_dotenv
-from autogen.agentchat.conversable_agent import register_function
-from tools import get_clients  # Import the data access function
-from email_sender import send_email_gmail  # Import the email function
 import os
-import json
+from flask import Flask, request, jsonify
+from autogen import ConversableAgent, AssistantAgent, UserProxyAgent
+from dotenv import load_dotenv, find_dotenv
+from autogen import register_function
+from tools import get_clients
+from email_sender import send_email_gmail
+from autogen import GroupChat, GroupChatManager
 
+app = Flask(__name__)
+
+# Load environment variables
 load_dotenv(find_dotenv())
 
-app = Flask(__name__, static_folder='static', template_folder='static')
-CORS(app, supports_credentials=True)
-
-
+# LLM configuration
 llm_config = {
     "model": "gpt-3.5-turbo",
     "api_key": os.environ["OPENAI_API_KEY"],
     "base_url": os.environ["OPENAI_BASE_URL"],
     "temperature": 0,
     "timeout": 120,
+    "cache_seed": None
 }
 
-# Agent 1: Client Management Agent
-client_management_agent = AssistantAgent(
-    name="client_management_agent",
-    llm_config=llm_config,
-    system_message="""
-    You are responsible for managing client information. 
-    When asked who to contact in a given city, use the get_clients tool in order to find clients.
-    Once you have the clients, respond by showing the clients in a bulleted list telling the user their name, age, profession, affiliation, and how much they have invested. 
-    You should then ask the user if they want to learn more about each client or if they want you to draft an email to them.
-    """,
-)
+# Message history tracking
+message_history = {
+    "wealth_management_advisor": [],
+    "user_proxy_agent": [],
+    "email_agent": []
+}
 
-# Agent 2: Email Drafting Agent
-email_drafting_agent = AssistantAgent(
-    name="email_drafting_agent",
-    llm_config=llm_config,
-    system_message="""
-    You are responsible for drafting, editing, and sending emails to clients based on their financial information and queries. 
+def save_history(history):
+    global message_history
+    message_history = history
 
-    IMPORTANT!! ALWAYS FOLLOW THESE STEPS:
-
-    1. Draft an email tailored to the client's specific needs, including topics such as:
-       - The Fund vs. outside funds
-       - Risk profiles
-       - Tax strategies
-
-    2. Present the draft to the user with the prefix "Here's a draft of the email:"
-
-    3. Ask the user if they would like to make any edits to the draft.
-
-    4. If the user provides edits, incorporate them into the email.
-
-    5. Present the final version of the email and ask for explicit confirmation to send it.
-
-    6. ONLY proceed with sending the email using the  send_email_gmail function after receiving explicit confirmation from the user.
-
-
-    """,
-)
-
-# Agent 3: Investment Advice Agent
-investment_advice_agent = AssistantAgent(
-    name="investment_advice_agent",
-    llm_config=llm_config,
-    system_message="""
-    You are responsible for providing investment advice to clients based on their financial details. 
-    Get the client details from get_clients tool, and the suggest the below 
-    Your primary goal is to convince clients to invest their remaining available assets into The Fund.
-    Key points to emphasize:
-    1. To achieve desired rates of return, clients can't rely solely on bonds.
-    2. The Fund engages in extensive diversification efforts through its investments.
-    3. The Fund can meet required portfolio risk diversification goals.
-    4. Be prepared to address common client objections and concerns.
-    Remember to be persuasive but also respectful of the client's concerns and financial goals.
-    """,
-)
-
-# User Proxy Agent
-user_proxy = UserProxyAgent(
-    name="user_proxy",
-    human_input_mode="NEVER",
-     code_execution_config={
-        "work_dir": "market",
-        "use_docker": False,
-    },
-    max_consecutive_auto_reply=0,
-    is_termination_msg=lambda x: x.get("content", "") and x.get("content", "").rstrip().endswith("TERMINATE"),
-)
-
-# Registering functions with specific agents
-register_function(
-    get_clients,
-    caller=client_management_agent,
-    executor=user_proxy,
-    name="get_clients_tool",  
-    description="This tool is used to look up clients based on the provided city or client name.",
-)
-
-register_function(
-    send_email_gmail,
-    caller=email_drafting_agent,
-    executor=user_proxy,
-    name="send_email_gmail",
-    description="This tool is used to send an email using Gmail SMTP, with the option to mask the sender as a company email.",
-)
-
-# A global dictionary to simulate memory
-session_memory = {}
-email_state = {}
-def process_response(agent, response, user_input):
-    global email_state
-    
-    if isinstance(response, str):
-        return response
-    elif isinstance(response, dict):
-        if response.get('content'):
-            return response['content']
-        elif response.get('tool_calls'):
-            for call in response['tool_calls']:
-                if call['function']['name'] == 'get_clients_tool':
-                    args = json.loads(call['function']['arguments'])
-                    city = args.get('city')
-                    if city in session_memory:
-                        clients = session_memory[city]
-                    else:
-                        clients = get_clients(city=city)
-                        session_memory[city] = clients
-                    return json.dumps(clients, indent=2)
-
-                elif call['function']['name'] == 'send_email_gmail':
-                    args = json.loads(call['function']['arguments'])
-                    if not email_state.get('draft'):
-                        email_state = {
-                            'draft': True,
-                            'recipient_email': args.get('recipient_email'),
-                            'subject': args.get('subject'),
-                            'body': args.get('body')
-                        }
-                        return f"Here's a draft of the email:\n\nTo: {email_state['recipient_email']}\nSubject: {email_state['subject']}\n\n{email_state['body']}\n\nWould you like to send this email? (Yes/No)"
-    
-    # Handle user confirmation outside of the response processing
-    if email_state.get('draft'):
-        if user_input.lower() == 'yes':
-            try:
-                result = send_email_gmail(email_state['recipient_email'], email_state['subject'], email_state['body'])
-                email_state = {}  # Reset the email state
-                return f"Email sent successfully. {result}"
-            except Exception as e:
-                email_state = {}  # Reset the email state
-                return f"An error occurred while sending the email: {str(e)}"
-        elif user_input.lower() == 'no':
-            return "Okay, what would you like to change in the email?"
-        else:
-            return "Please respond with 'Yes' to send the email or 'No' to edit it."
-
-    return "I'm sorry, I couldn't process that request."
+def get_history():
+    global message_history
+    return message_history
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    global email_state
-    data = request.json
-    user_input = data.get('message', '').strip()
-    print("User input:", user_input)
+    print("Request Object:", request)
+    message = request.json["message"]
 
-    if not user_input:
-        return jsonify({"response": "It seems you didn't type anything. Please enter your message."}), 400
+    wealth_management_advisor = AssistantAgent(
+    name="wealth_management_advisor",
+    llm_config=llm_config,
+    system_message="""
+        You are a wealth management advisor who provides financial advice. 
+        1. When asked to find clients in a specific city, use the `get_clients` tool to retrieve the clients in that city.
+        2. If the user asks for more information about a specific client (for example, "Tell me more about Lawrence"), do not search for new clients. Instead, look through the clients you have already retrieved and provide more detailed information from the 'details' section about the specific client.
+        3. Only call the `get_clients` tool if the user is asking for clients in a new city or if the city hasn't been mentioned yet.
+    """,
+    human_input_mode="NEVER",
+)
 
-    if email_state.get('draft'):
-        # If we have a draft, we don't need to call the AI model again
-        processed_response = process_response(None, None, user_input)
-        # Clear the email state if the user doesn't want to send the email
-        if user_input.lower() != 'yes':
-            email_state = {}
-        return jsonify({'response': processed_response})
-    else:
-        if "client" in user_input.lower() or "Boston" in user_input.lower() or "Hello" in user_input.lower():
-            agent = client_management_agent
-        elif "email" in user_input.lower():
-            agent = email_drafting_agent
-        elif "discussion" in user_input.lower() or "investment" in user_input.lower() or "invest" in user_input.lower() :
-            agent = investment_advice_agent
+    print("Registering get_clients tool")
+    wealth_management_advisor.register_for_llm(name="get_clients", description="This tool is used to look up for clients and their information using the get_clients tool.")(get_clients)
+
+    # Create email agent
+    email_agent = AssistantAgent(
+        name="emaiil_agent",
+        llm_config=llm_config,
+        system_message="""
+            You are responsible for drafting, editing, and sending emails to clients. 
+            IMPORTANT: 
+            ONLY respond if the user explicitly asks for an email draft or gives confirmation to send an email. 
+            DO NOT respond unless the user directly asks for email-related actions.
+            IMPORTANT: Follow these steps:
+            1. First, draft the email and ask if the user wants to make any edits.
+            2. If the user asks for edits, incorporate them and show the updated draft.
+            3. Finally, confirm with the user before sending the email.
+            Keep track of the drafting, editing, and confirmation states using the email agent state.
+""")
+    def email_workflow(user_input : str) -> str:
+        global email_agent_state
+        
+        # Drafting phase
+        if not email_agent_state["drafting"] and not email_agent_state["editing"] and not email_agent_state["confirmation"]:
+            email_agent_state["drafting"] = True
+            email_agent_state["email_content"] = f"Here's the draft of the email:\n\nDear [Client],\n\n{user_input}\n\nBest Regards"
+            return email_agent_state["email_content"] + "\n\nWould you like to make any edits?"
+
+        # Editing phase
+        elif email_agent_state["drafting"] and "edit" in user_input.lower():
+            email_agent_state["editing"] = True
+            email_agent_state["drafting"] = False
+            email_agent_state["email_content"] = f"Updated email draft based on your edits:\n\n{user_input}"
+            return email_agent_state["email_content"] + "\n\nDoes this look good? Confirm before sending."
+
+        # Confirmation phase
+        elif email_agent_state["editing"] and ("confirm" in user_input.lower() or "send" in user_input.lower()):
+            email_agent_state["confirmation"] = True
+            email_agent_state["editing"] = False
+            return "Email is ready to be sent. Do you confirm the send?"
+
+        # Sending phase
+        elif email_agent_state["confirmation"] and ("yes" in user_input.lower() or "send" in user_input.lower()):
+            send_email_gmail(email_agent_state["email_content"])  # Call the send email function
+            email_agent_state["confirmation"] = False
+            email_agent_state["email_content"] = ""
+            return "Email has been sent successfully!"
+        
         else:
-            return jsonify({"response": "Please specify whether you're asking about a client, email, or investment."}), 400
+            return "Invalid response. Please confirm, edit, or send the email."
 
-        user_proxy.send(user_input, agent)
-        agent_response = agent.generate_reply(
-            user_proxy.chat_messages[agent], sender=user_proxy
-        )
-        print(f"{agent.name} response:", agent_response)
-        processed_response = process_response(agent, agent_response, user_input)
-        user_proxy.receive(processed_response, agent)
-        return jsonify({'response': processed_response})
-
-@app.route('/reset', methods=['GET'])
-def reset_conversation():
-    user_proxy.reset()
-    client_management_agent.reset()
-    email_drafting_agent.reset()
-    investment_advice_agent.reset()
-    return jsonify({"message": "Conversation reset successfully"})
+    # Register the email workflow and sending function
+    email_agent.register_for_llm(name="email_workflow", description="Handles drafting, editing, and sending emails.")(email_workflow)
+    email_agent.register_for_llm(name="send_email_gmail", description="Send emails using the send_email_gmail tool.")(send_email_gmail)
 
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    return '', 200
+
+    
+    
+    # Function to check for termination message
+    def should_terminate_user(message):
+        print("Message received:", message)
+        return "tool_calls" not in message and message["role"] != "tool"
+
+    # Create user proxy agent
+    user_proxy_agent = UserProxyAgent(
+        name="user",
+        llm_config=llm_config,
+        description="A human user capable of interacting with AI agents.",
+        human_input_mode="NEVER",
+        code_execution_config={
+            "last_n_messages": 10,
+            "work_dir": "market",
+            "use_docker": False,
+        },
+        is_termination_msg=should_terminate_user,
+    )
+
+    # Register functions with the user proxy agent
+ 
+    user_proxy_agent.register_for_execution(name="get_clients")(get_clients)
+
+    # Create group chat
+    group_chat = GroupChat(agents=[user_proxy_agent, wealth_management_advisor], messages=[], max_round=120)
+
+    group_manager = GroupChatManager(
+        groupchat=group_chat,
+        llm_config=llm_config,
+        human_input_mode="NEVER"
+    )
+
+    # Set histories
+    history = get_history()
+    wealth_management_advisor._oai_messages = {group_manager: history['wealth_management_advisor']}
+    user_proxy_agent._oai_messages = {group_manager: history['user_proxy_agent']}
+
+    # Initiate the group chat
+    user_proxy_agent.initiate_chat(group_manager, message=message, clear_history=False)
 
 
-@app.route('/')
-def serve_root():
-    print("Static folder path:", app.static_folder)  # Check the folder
-    print("Index.html exists:", os.path.isfile(os.path.join(app.static_folder, 'index.html')))  # Check the file
-    return send_from_directory(app.static_folder, 'index.html')
+    # Save updated history
+    # Save updated history after the chat
+    save_history({
+        "wealth_management_advisor": wealth_management_advisor.chat_messages.get(group_manager),
+        "user_proxy_agent": user_proxy_agent.chat_messages.get(group_manager)
+    })
 
-@app.route('/<path:full_path>')
-def serve_app(full_path):
-    file_path = os.path.join(app.static_folder, full_path)
-    if os.path.isfile(file_path):
-        return send_from_directory(app.static_folder, full_path)
-    else:
-        return send_from_directory(app.static_folder, 'index.html')
-
+    # Return the latest response from the chat
+    return jsonify(group_chat.messages[-1])
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
-
+    app.run(debug=True, port=8080)
