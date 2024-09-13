@@ -12,3 +12,6 @@ Prerequisites
 
 Python 3.7+
 Gmail account (for email functionality)
+
+to run:
+flask --app main run

@@ -6,8 +6,10 @@ from autogen import register_function
 from tools import get_clients
 from email_sender import send_email_gmail
 from autogen import GroupChat, GroupChatManager
+from flask_cors import CORS
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', template_folder='static')
+CORS(app, supports_credentials=True)
 
 # Load environment variables
 load_dotenv(find_dotenv())
@@ -28,6 +30,15 @@ message_history = {
     "user_proxy_agent": [],
     "email_agent": []
 }
+
+email_agent_state = { "drafting": False, "editing": False, "confirmation": False, "email_content": "" }
+
+
+# Function to check for termination message
+def should_terminate_user(message):
+    print("Message received:", message)
+    # return "tool_calls" not in message and message["role"] != "tool"
+    return 'TERMINATE' in message['content'] 
 
 def save_history(history):
     global message_history
@@ -50,8 +61,11 @@ def chat():
         1. When asked to find clients in a specific city, use the `get_clients` tool to retrieve the clients in that city.
         2. If the user asks for more information about a specific client (for example, "Tell me more about Lawrence"), do not search for new clients. Instead, look through the clients you have already retrieved and provide more detailed information from the 'details' section about the specific client.
         3. Only call the `get_clients` tool if the user is asking for clients in a new city or if the city hasn't been mentioned yet.
+        4. If the user asks you about drafting or sending emails, don't respond to the user and instead ask the 'email_agent' to handle that.
+        Each time you respond to the user end your message with the word 'TERMINATE', unless you are going to invoke the 'email_agent'.
     """,
     human_input_mode="NEVER",
+    is_termination_msg=should_terminate_user,
 )
 
     print("Registering get_clients tool")
@@ -59,7 +73,7 @@ def chat():
 
     # Create email agent
     email_agent = AssistantAgent(
-        name="emaiil_agent",
+        name="email_agent",
         llm_config=llm_config,
         system_message="""
             You are responsible for drafting, editing, and sending emails to clients. 
@@ -71,7 +85,10 @@ def chat():
             2. If the user asks for edits, incorporate them and show the updated draft.
             3. Finally, confirm with the user before sending the email.
             Keep track of the drafting, editing, and confirmation states using the email agent state.
-""")
+            Each time you respond to the user or the chat_manager respond with the word 'TERMINATE'.
+        """,
+        is_termination_msg=should_terminate_user,
+        )
     def email_workflow(user_input : str) -> str:
         global email_agent_state
         
@@ -79,30 +96,30 @@ def chat():
         if not email_agent_state["drafting"] and not email_agent_state["editing"] and not email_agent_state["confirmation"]:
             email_agent_state["drafting"] = True
             email_agent_state["email_content"] = f"Here's the draft of the email:\n\nDear [Client],\n\n{user_input}\n\nBest Regards"
-            return email_agent_state["email_content"] + "\n\nWould you like to make any edits?"
+            return email_agent_state["email_content"] + "\n\nWould you like to make any edits? TERMINATE"
 
         # Editing phase
         elif email_agent_state["drafting"] and "edit" in user_input.lower():
             email_agent_state["editing"] = True
             email_agent_state["drafting"] = False
             email_agent_state["email_content"] = f"Updated email draft based on your edits:\n\n{user_input}"
-            return email_agent_state["email_content"] + "\n\nDoes this look good? Confirm before sending."
+            return email_agent_state["email_content"] + "\n\nDoes this look good? Confirm before sending. TERMINATE"
 
         # Confirmation phase
         elif email_agent_state["editing"] and ("confirm" in user_input.lower() or "send" in user_input.lower()):
             email_agent_state["confirmation"] = True
             email_agent_state["editing"] = False
-            return "Email is ready to be sent. Do you confirm the send?"
+            return "Email is ready to be sent. Do you confirm the send? TERMINATE"
 
         # Sending phase
         elif email_agent_state["confirmation"] and ("yes" in user_input.lower() or "send" in user_input.lower()):
             send_email_gmail(email_agent_state["email_content"])  # Call the send email function
             email_agent_state["confirmation"] = False
             email_agent_state["email_content"] = ""
-            return "Email has been sent successfully!"
+            return "Email has been sent successfully! TERMINATE"
         
         else:
-            return "Invalid response. Please confirm, edit, or send the email."
+            return "Invalid response. Please confirm, edit, or send the email. TERMINATE"
 
     # Register the email workflow and sending function
     email_agent.register_for_llm(name="email_workflow", description="Handles drafting, editing, and sending emails.")(email_workflow)
@@ -110,18 +127,17 @@ def chat():
 
 
 
-    
-    
-    # Function to check for termination message
-    def should_terminate_user(message):
-        print("Message received:", message)
-        return "tool_calls" not in message and message["role"] != "tool"
-
     # Create user proxy agent
     user_proxy_agent = UserProxyAgent(
         name="user",
         llm_config=llm_config,
-        description="A human user capable of interacting with AI agents.",
+        description="""
+            A human user capable of interacting with AI agents.,
+        """,
+        system_message=""""
+            Always appends the word 'TERMINATE' at the end of each message.
+            If the response is because a message has been received, please provide the message received to the next speaker as part of the response.
+        """,
         human_input_mode="NEVER",
         code_execution_config={
             "last_n_messages": 10,
@@ -134,9 +150,10 @@ def chat():
     # Register functions with the user proxy agent
  
     user_proxy_agent.register_for_execution(name="get_clients")(get_clients)
+    user_proxy_agent.register_for_execution(name="email_workflow")(email_workflow)
 
     # Create group chat
-    group_chat = GroupChat(agents=[user_proxy_agent, wealth_management_advisor], messages=[], max_round=120)
+    group_chat = GroupChat(agents=[user_proxy_agent, email_agent, wealth_management_advisor], messages=[], max_round=120)
 
     group_manager = GroupChatManager(
         groupchat=group_chat,
@@ -161,6 +178,8 @@ def chat():
     })
 
     # Return the latest response from the chat
+    print('RETURNING ========================================================================================================')
+    print(group_chat.messages[-1])
     return jsonify(group_chat.messages[-1])
 
 if __name__ == '__main__':
