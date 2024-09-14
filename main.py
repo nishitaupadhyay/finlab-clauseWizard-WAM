@@ -34,6 +34,7 @@ message_history = {
 
 # Function to check for termination message
 def should_terminate_user(message):
+    print("======================================RETURNING============================================")
     print("Message received:", message)
     # return "tool_calls" not in message and message["role"] != "tool"
     return 'TERMINATE' in message['content'] 
@@ -73,16 +74,17 @@ def chat():
         name="email_agent",
         llm_config=llm_config,
         system_message="""
-            You are responsible for drafting, editing, and sending emails to clients.
-            First, draft the email and present it to the user without sending. 
-            Ask if they want to make changes or are ready to send. 
-            Update the draft as needed until approval. 
-            Once approved, get explicit confirmation before using the send_email_gmail function to send the email. 
-            Afterward, confirm the email has been sent successfully by sending appropriate success message. 
-            Always wait for user input before proceeding.
-            Each time you respond to the chat_manager end your message with the word 'TERMINATE'
+            You are responsible for drafting, editing, and sending emails to clients. 
+            IMPORTANT: 
+            ONLY respond if the user explicitly asks for an email draft or gives confirmation to send an email. 
+            IMPORTANT: Follow these steps:
+            1. First, draft the email and ask if the user wants to make any edits.
+            2. If the user confirms the email, send the email using the send_email_gmail tool.
+            Each time you respond to the user or the chat manager end your message with the word 'TERMINATE', unless you are going to invoke the 'wealth_management_advisor' again.
+
         """,
         is_termination_msg=should_terminate_user,
+        human_input_mode="NEVER"
     )
 
 
@@ -96,7 +98,7 @@ def chat():
         description="""
             A human user capable of interacting with AI agents.,
         """,
-        system_message=""""
+        system_message="""
             Always appends the word 'TERMINATE' at the end of each message.
         """,
         human_input_mode="NEVER",
@@ -125,8 +127,9 @@ def chat():
     # Set histories
     history = get_history()
     wealth_management_advisor._oai_messages = {group_manager: history['wealth_management_advisor']}
-    user_proxy_agent._oai_messages = {group_manager: history['user_proxy_agent']}
     email_agent._oai_messages = {group_manager: history['email_agent']}
+    user_proxy_agent._oai_messages = {group_manager: history['user_proxy_agent']}
+   
 
     # Initiate the group chat
     user_proxy_agent.initiate_chat(group_manager, message=message, clear_history=False)
@@ -141,8 +144,7 @@ def chat():
     })
 
     # Return the latest response from the chat
-    print('RETURNING ========================================================================================================')
-    print(group_chat.messages[-1])
+   
     return jsonify(group_chat.messages[-1])
 
 
