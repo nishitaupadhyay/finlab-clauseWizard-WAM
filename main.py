@@ -28,7 +28,10 @@ llm_config = {
 message_history = {
     "wealth_management_advisor": [],
     "user_proxy_agent": [],
-    "email_agent": []
+    "email_agent": [],
+    "drafting_agent": [],
+    "editing_agent": [],
+    "sending_agent": [],
 }
 
 
@@ -70,27 +73,74 @@ def chat():
     print("Registering get_clients tool")
     wealth_management_advisor.register_for_llm(name="get_clients", description="This tool is used to look up for clients and their information using the get_clients tool.")(get_clients)
 
-    email_agent = AssistantAgent(
-        name="email_agent",
-        llm_config=llm_config,
-        system_message="""
-            You are responsible for drafting, editing, and sending emails to clients. 
-            IMPORTANT: 
-            ONLY respond if the user explicitly asks for an email draft or gives confirmation to send an email. 
-            IMPORTANT: Follow these steps:
-            1. First, draft the email and ask if the user wants to make any edits.
-            2. If the user confirms the email, send the email using the send_email_gmail tool.
-            Each time you respond to the user or the chat manager end your message with the word 'TERMINATE', unless you are going to invoke the 'wealth_management_advisor' again.
-
-        """,
-        is_termination_msg=should_terminate_user,
-        human_input_mode="NEVER"
-    )
+    # email_agent = AssistantAgent(
+    #     name="email_agent",
+    #     llm_config=llm_config,
+    #     system_message="""
+    #         You are responsible for drafting, editing, and sending emails to clients. 
+    #         IMPORTANT: 
+    #         ONLY respond if the user explicitly asks for an email draft or gives confirmation to send an email. 
+    #         IMPORTANT: Follow these steps:
+    #         1. First, draft the email and ask if the user wants to make any edits.
+    #         2. If the user confirms the email, send the email using the send_email_gmail tool.
+    #         Each time you respond to the user or the chat manager end your message with the word 'TERMINATE', unless you are going to invoke the 'wealth_management_advisor' again.
+    #     """,
+    #     is_termination_msg=should_terminate_user,
+    #     human_input_mode="NEVER"
+    # )
 
 
     # Register the email workflow and sending function
-    email_agent.register_for_llm(name="send_email_gmail", description="Sends the email using send_email_gmail tool. Only use this after explicit user confirmation.")(send_email_gmail)
+    # email_agent.register_for_llm(name="send_email_gmail", description="Sends the email using send_email_gmail tool. Only use this after explicit user confirmation.")(send_email_gmail)
 
+   
+   # Drafting agent
+    drafting_agent = AssistantAgent(
+        name="drafting_agent",
+        llm_config=llm_config,
+        system_message="""
+    Draft the email. Ask if the user wants to edit or proceed with sending. 
+    If editing is requested, pass the task to the editing_agent. 
+    If confirmed, pass the task to the sending_agent. 
+    End each response with 'TERMINATE'.
+    """,
+        is_termination_msg=should_terminate_user,
+)
+
+# Editing agent
+    editing_agent = AssistantAgent(
+        name="editing_agent",
+        llm_config=llm_config,
+        system_message="""
+    Handle email edits. Ask what changes the user wants.
+    After edits, pass the task to the sending_agent. 
+    End each response with 'TERMINATE'.
+    """,
+        is_termination_msg=should_terminate_user,
+)
+
+# Sending agent
+
+    sending_agent = AssistantAgent(
+    name="sending_agent",
+    llm_config=llm_config,
+    system_message="""
+    When the user requests to send an email, extract the recipient email, subject, and body from the previous messages.
+    Then use the 'send_email_gmail' tool to send the email. Ensure all fields are correctly populated before sending.
+    End each response with 'TERMINATE'.
+    """,
+    is_termination_msg=should_terminate_user,
+)
+
+
+    
+    print("-----REGISTERING THE SENDING EMAIL AGENT FUNCTION-----")
+    sending_agent.register_for_llm(
+    name="send_email_gmail", 
+    description="Sends the email using the send_email_gmail tool."
+)(send_email_gmail)
+    
+    
     # Create user proxy agent
     user_proxy_agent = UserProxyAgent(
         name="user",
@@ -114,9 +164,10 @@ def chat():
  
     user_proxy_agent.register_for_execution(name="get_clients")(get_clients)
     user_proxy_agent.register_for_execution(name="send_email_gmail")(send_email_gmail)
+    
 
     # Create group chat
-    group_chat = GroupChat(agents=[user_proxy_agent, email_agent, wealth_management_advisor], messages=[], max_round=120)
+    group_chat = GroupChat(agents=[user_proxy_agent, wealth_management_advisor, drafting_agent, editing_agent, sending_agent], messages=[], max_round=120)
 
     group_manager = GroupChatManager(
         groupchat=group_chat,
@@ -127,8 +178,12 @@ def chat():
     # Set histories
     history = get_history()
     wealth_management_advisor._oai_messages = {group_manager: history['wealth_management_advisor']}
-    email_agent._oai_messages = {group_manager: history['email_agent']}
+    drafting_agent._oai_messages = {group_manager: history['drafting_agent']}
+    editing_agent._oai_messages = {group_manager: history['editing_agent']}
+    sending_agent._oai_messages = {group_manager: history['sending_agent']}
+    # email_agent.oia_messages = {group_manager: history['email_agent']}
     user_proxy_agent._oai_messages = {group_manager: history['user_proxy_agent']}
+
    
 
     # Initiate the group chat
@@ -140,7 +195,10 @@ def chat():
     save_history({
         "wealth_management_advisor": wealth_management_advisor.chat_messages.get(group_manager),
         "user_proxy_agent": user_proxy_agent.chat_messages.get(group_manager),
-        "email_agent": email_agent.chat_messages.get(group_manager)
+        # "email_agent": email_agent.chat_messages.get(group_manager)
+        "drafting_agent": drafting_agent.chat_messages.get(group_manager),
+        "editing_agent": editing_agent.chat_messages.get(group_manager),
+        "sending_agent": sending_agent.chat_messages.get(group_manager),
     })
 
     # Return the latest response from the chat
