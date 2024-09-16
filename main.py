@@ -24,75 +24,28 @@ llm_config = {
     "cache_seed": None
 }
 
-# Message history tracking
-message_history = {
-    "wealth_management_advisor": [],
-    "user_proxy_agent": [],
-    "email_agent": []
-}
+# Initialize agents
 
-
-# Function to check for termination message
-def should_terminate_user(message):
-    print("======================================RETURNING============================================")
-    print("Message received:", message)
-    # return "tool_calls" not in message and message["role"] != "tool"
-    return 'TERMINATE' in message['content'] 
-
-def save_history(history):
-    global message_history
-    message_history = history
-
-def get_history():
-    global message_history
-    return message_history
-
-@app.route('/chat', methods=['POST'])
-def chat():
-    print("Request Object:", request)
-    message = request.json["message"]
-
-    wealth_management_advisor = AssistantAgent(
-    name="wealth_management_advisor",
+# Draft agent to draft an email
+draft_agent = AssistantAgent(
     llm_config=llm_config,
-    system_message="""
-        You are a wealth management advisor who provides financial advice. 
-        1. When asked to find clients in a specific city, use the `get_clients` tool to retrieve the clients in that city.
-        2. If the user asks for more information about a specific client (for example, "Tell me more about Lawrence"), do not search for new clients. Instead, look through the clients you have already retrieved and provide more detailed information from the 'details' section about the specific client.
-        3. Only call the `get_clients` tool if the user is asking for clients in a new city or if the city hasn't been mentioned yet.
-        4. If the user asks you about drafting or sending emails, don't respond to the user and instead ask the 'email_agent' to handle that.
-        Each time you respond to the user end your message with the word 'TERMINATE', unless you are going to invoke the 'email_agent'.
-    """,
-    human_input_mode="NEVER",
-    is_termination_msg=should_terminate_user,
+    name="Draft Agent",
+    system_message="You are the Draft Agent. Your task is to draft an email based on the user's input."
+)
+# Edit agent to edit the email based on user's feedback
+edit_agent = AssistantAgent(
+    llm_config=llm_config,
+    name="Edit Agent",
+    system_message="You are the Edit Agent. You will review the draft and apply any user-provided edits. Add "
+)
+# Send agent to send the email
+send_agent = AssistantAgent(
+    llm_config=llm_config,
+    name="Send Agent",
+    system_message="You are the Send Agent. Once the email is finalized and approved, you will send it."
 )
 
-    print("Registering get_clients tool")
-    wealth_management_advisor.register_for_llm(name="get_clients", description="This tool is used to look up for clients and their information using the get_clients tool.")(get_clients)
-
-    email_agent = AssistantAgent(
-        name="email_agent",
-        llm_config=llm_config,
-        system_message="""
-            You are responsible for drafting, editing, and sending emails to clients. 
-            IMPORTANT: 
-            ONLY respond if the user explicitly asks for an email draft or gives confirmation to send an email. 
-            IMPORTANT: Follow these steps:
-            1. First, draft the email and ask if the user wants to make any edits.
-            2. If the user confirms the email, send the email using the send_email_gmail tool.
-            Each time you respond to the user or the chat manager end your message with the word 'TERMINATE', unless you are going to invoke the 'wealth_management_advisor' again.
-
-        """,
-        is_termination_msg=should_terminate_user,
-        human_input_mode="NEVER"
-    )
-
-
-    # Register the email workflow and sending function
-    email_agent.register_for_llm(name="send_email_gmail", description="Sends the email using send_email_gmail tool. Only use this after explicit user confirmation.")(send_email_gmail)
-
-    # Create user proxy agent
-    user_proxy_agent = UserProxyAgent(
+user_proxy_agent = UserProxyAgent(
         name="user",
         llm_config=llm_config,
         description="""
@@ -107,46 +60,32 @@ def chat():
             "work_dir": "market",
             "use_docker": False,
         },
-        is_termination_msg=should_terminate_user,
+     
     )
 
-    # Register functions with the user proxy agent
- 
-    user_proxy_agent.register_for_execution(name="get_clients")(get_clients)
-    user_proxy_agent.register_for_execution(name="send_email_gmail")(send_email_gmail)
-
-    # Create group chat
-    group_chat = GroupChat(agents=[user_proxy_agent, email_agent, wealth_management_advisor], messages=[], max_round=120)
-
-    group_manager = GroupChatManager(
-        groupchat=group_chat,
-        llm_config=llm_config,
-        human_input_mode="NEVER"
-    )
-
-    # Set histories
-    history = get_history()
-    wealth_management_advisor._oai_messages = {group_manager: history['wealth_management_advisor']}
-    email_agent._oai_messages = {group_manager: history['email_agent']}
-    user_proxy_agent._oai_messages = {group_manager: history['user_proxy_agent']}
-   
-
-    # Initiate the group chat
-    user_proxy_agent.initiate_chat(group_manager, message=message, clear_history=False)
 
 
-    # Save updated history
-    # Save updated history after the chat
-    save_history({
-        "wealth_management_advisor": wealth_management_advisor.chat_messages.get(group_manager),
-        "user_proxy_agent": user_proxy_agent.chat_messages.get(group_manager),
-        "email_agent": email_agent.chat_messages.get(group_manager)
-    })
+register_function(
+    send_email_gmail,
+    caller=send_agent,  # The assistant agent can suggest calls to the calculator.
+    executor=user_proxy_agent,  # The user proxy agent can execute the calculator calls.
+    name="send_email_gmail",  # By default, the function name is used as the tool name.
+    description="A tool for sending emails.",  # A description of the tool.
+  )
 
-    # Return the latest response from the chat
-   
+# Create a group chat manager
+group_chat = GroupChat([draft_agent, edit_agent, send_agent],  messages=[], max_round=120)
+group_chat_manager = GroupChatManager(group_chat)
+
+
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    message = request.json["message"]
+    response = user_proxy_agent.initiate_chat(group_chat_manager, message=message, clear_history=False)
+    print(response)
     return jsonify(group_chat.messages[-1])
-
+   
 
 @app.route('/reset', methods=['GET'])
 def reset_conversation():
