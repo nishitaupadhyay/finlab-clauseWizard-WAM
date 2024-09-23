@@ -39,7 +39,7 @@ SYSTEM_MESSAGE = {
         Do not send the email until the User explicitly confirms he wants it sent. Accordingly, you should not
         use the send_email_gmail tool until the text of the email is confirmed by the User.
 
-    6. If the user asks what topics should be discussed in a meeting with a client, review the client's information and look for the following:
+    6. If the user asks what topics should be discussed in a meeting with a client, review the client's information and consider:
         a. If the user has no mention of wills, trusts, or power of attorney in their personal details, tell the user that their information
         may be incomplete and that they should considering inquiring with the client about those topics in their meeting.
         b. If the client's portfolio has negative performance, tell the user that they may want to bring that up with the client. Be sure to cite
@@ -47,6 +47,9 @@ SYSTEM_MESSAGE = {
         so you should call this to the attention of the user citing that decrease.
         c. If the planned age of retirement is less than 5 years away, tell the user that they should discuss this fact as their
         changing circumstances means they might benefit from a financial review.
+        IMPORTANT: do not respond with these bullet points literally. They are topics you should consider mentioning, but I do not want you to
+        copy and paste these into the response. You should phrase your response to the user in a way that indicates you are recommending they
+        review these topics. Do not repeat them verbatim.
     """
 }
 
