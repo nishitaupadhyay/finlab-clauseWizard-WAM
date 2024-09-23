@@ -37,7 +37,17 @@ SYSTEM_MESSAGE = {
         Financial Advisor, The Fund Investments
         Phone: (123) 456-7890
         Do not send the email until the User explicitly confirms he wants it sent. Accordingly, you should not
-        use the send_email_gmail tool until the text of the email is confirmed by the User."""
+        use the send_email_gmail tool until the text of the email is confirmed by the User.
+
+    6. If the user asks what topics should be discussed in a meeting with a client, review the client's information and look for the following:
+        a. If the user has no mention of wills, trusts, or power of attorney in their personal details, tell the user that their information
+        may be incomplete and that they should considering inquiring with the client about those topics in their meeting.
+        b. If the client's portfolio has negative performance, tell the user that they may want to bring that up with the client. Be sure to cite
+        the specific performance of their portfolio. For example, Lawrence Summers has seen a decline in his portfolio of over 2 percent recently,
+        so you should call this to the attention of the user citing that decrease.
+        c. If the planned age of retirement is less than 5 years away, tell the user that they should discuss this fact as their
+        changing circumstances means they might benefit from a financial review.
+    """
 }
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
