@@ -4,6 +4,7 @@ import os
 from openai import AsyncOpenAI
 from dotenv import load_dotenv, find_dotenv
 from email_sender import send_email_gmail
+from dummy_funds import get_funds
 from fastapi import FastAPI, APIRouter, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,14 @@ SYSTEM_MESSAGE = {
     "content": """You are Financial Advisor, a virtual assistant who specializes in performing research on clients, creating and sending emails to clients,
     and providing the user with helpful advice on what topics they should be discussing with their clients given relevant
     client characteristics like age, income level, available assets, planned retirement age, risk tolerance, etc.
+    IMPORTANT INSTRUCTIONS TO ALWAYS FOLLOW:
+    1. **Friendly and Personalized Communication**: Always respond in a warm, conversational tone. Use casual language, contractions, and even a touch of humor when appropriate. Imagine you're chatting with a colleague you know well.
+    2. **Engage Personally**: Reference the user's previous messages or known information to make your responses feel more personalized and connected to the ongoing conversation.
+    3. **Show Empathy**: When discussing sensitive topics like financial challenges or retirement planning, express understanding and support.
+    4. **Be Encouraging**: Offer positive reinforcement when the user is making good financial decisions or asking insightful questions.
+    5. **Use Relatable Examples**: When explaining complex financial concepts, use everyday analogies or examples that make the information more accessible and engaging.
+    7. **Be Concise but Warm**: While keeping responses direct and on-topic, maintain a friendly tone. It's okay to add a brief personal comment or question to build rapport.
+
 
     IMPORTANT:
     1. **Always Respond Only to the Most Recent Query**: Only focus on the user's most recent question or task. 
@@ -50,6 +59,14 @@ SYSTEM_MESSAGE = {
         IMPORTANT: do not respond with these bullet points literally. They are topics you should consider mentioning, but I do not want you to
         copy and paste these into the response. You should phrase your response to the user in a way that indicates you are recommending they
         review these topics. Do not repeat them verbatim.
+
+    7. When the user asks for fund recommendations for a client:
+        b. Based on the client's profile (age, risk tolerance, invested assets, etc.), determine appropriate criteria for fund selection.
+        c. Use the get_funds tool to fetch fund recommendations based on these criteria.
+        d. Suggest only funds from the list returned by the get_funds tool.
+        e. Explain why these funds are suitable for the client's profile.
+Remember, your goal is to be helpful and informative while also being approachable and relatable. Make the user feel like they're talking to a knowledgeable friend rather than a formal financial institution.
+
     """
 }
 
@@ -65,7 +82,7 @@ llm_config = {
 
 client = AsyncOpenAI()
 
-MAX_ITER = 5
+MAX_ITER = 50
 
 # Configure CORS
 origins = [
@@ -109,7 +126,7 @@ def get_clients(city: str = None) -> str:
             'affiliation': 'Harvard University',  
             'invested_assets': 180000, 
             'last_contacted_days': 15, 
-            'details': 'Lawrence appears to be 10 years from retirement and is estimated to have $40k in investable assets that are not invested in The Fund. Lawrence has been with The Fund for over three years and favors an aggressive risk profile and passive management. Of the assets with The Fund, they appear to draw from a broad array of fund managers, including both The Fund-affiliated and outside funds. However, his current investment mix is stock-heavy, which may pose a risk at his age. It is recommended that Lawrence switch to a more bond-heavy investment strategy to better align with his risk tolerance and nearing retirement.',
+            'details': 'Lawrence appears to be 3 years from retirement and is estimated to have $40k in investable assets that are not invested in The Fund. Lawrence has been with The Fund for over three years and favors an aggressive risk profile and passive management. Of the assets with The Fund, they appear to draw from a broad array of fund managers, including both The Fund-affiliated and outside funds. However, his current investment mix is stock-heavy, which may pose a risk at his age. It is recommended that Lawrence switch to a more bond-heavy investment strategy to better align with his risk tolerance and nearing retirement.',
             'meeting_notes': 'In the last meeting, Lawrence expressed interest in knowing about trusts and wills for his family, and also increasing his 401k contribution. During our review this week, it was noted that one of the funds Lawrence is heavily invested in experienced a 2% decline in value over the past month.'
         },
         {
@@ -241,7 +258,38 @@ tools = [
                 "required": ["recipient_email", "subject", "body"],
             },
         },
-    }
+    }, 
+    {
+        "type": "function",
+        "function": {
+            "name": "get_funds",
+            "description": "Get fund recommendations based on given criteria",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "risk_level": {
+                        "type": "string",
+                        "enum": ["Low", "Moderate", "High"],
+                        "description": "The risk level of the fund",
+                    },
+                    "min_rating": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5,
+                        "description": "The minimum Morningstar rating of the fund",
+                    },
+                    "max_expense_ratio": {
+                        "type": "number",
+                        "description": "The maximum expense ratio of the fund",
+                    },
+                    "max_investment": {
+                        "type": "number",
+                        "description": "The maximum minimum investment amount for the fund",
+                    },
+                },
+            },
+        },
+    },
 ]
 
 async def call_tool(tool_call):
@@ -261,6 +309,8 @@ async def call_tool(tool_call):
             subject=arguments.get("subject"),
             body=arguments.get("body"),
         )
+    elif function_name == "get_funds":
+        return get_funds(criteria=arguments)
 
 async def call_gpt4(message_history):
     settings = {
