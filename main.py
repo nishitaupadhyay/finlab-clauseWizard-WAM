@@ -2,24 +2,37 @@ import json
 import ast
 import os
 from openai import AsyncOpenAI
+from enum import Enum
 from dotenv import load_dotenv, find_dotenv
-from email_sender import send_email_gmail
-from dummy_funds import get_funds
+
 from fastapi import FastAPI, APIRouter, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from tools import get_clients, get_funds, send_email_gmail
+
 
 load_dotenv(find_dotenv())
 
 app = FastAPI()
 
+class Industry(str, Enum):
+    real_estate = "real estate"
+    wam = "wam"
 
+class Config(BaseModel):
+    industry: Industry = Industry.wam
+    client_name: str = 'TIAA'
+    model: str = 'gpt-4o'
+
+config = Config()
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 llm_config = {
-    "model": "gpt-4o",
+    "model": config.model,
     "api_key": os.environ["OPENAI_API_KEY"],
     "base_url": os.environ["OPENAI_BASE_URL"],
     "temperature": 0,
@@ -48,102 +61,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Example dummy function hard coded to return the same weather
-def get_current_weather(location, unit):
-    """Get the current weather in a given location"""
-    print('tool selected')
-    unit = unit or "Fahrenheit"
-    weather_info = {
-        "location": location,
-        "temperature": "72",
-        "unit": unit,
-        "forecast": ["sunny", "windy"],
-    }
-    return json.dumps(weather_info)
-
-def get_clients(city: str = None) -> str:
-    """Look in the database to see if there are any clients at a specified city for the User to review"""
-    database = {
-    "Boston": [
-        {
-            'name': 'Lawrence Summers', 
-            'email':'nishita84@gmail.com', 
-            'age': 60, 
-            'profession': 'Professor', 
-            'affiliation': 'Harvard University',  
-            'invested_assets': 180000, 
-            'last_contacted_days': 15, 
-            'details': 'Lawrence appears to be 3 years from retirement and is estimated to have $40k in investable assets that are not invested in The Fund. Lawrence has been with The Fund for over three years and favors an high risk profile and passive management. Of the assets with The Fund, they appear to draw from a broad array of fund managers, including both The Fund-affiliated and outside funds. However, his current investment mix is stock-heavy, which may pose a risk at his age. It is recommended that Lawrence switch to a more bond-heavy investment strategy to better align with his risk tolerance and nearing retirement.',
-            'meeting_notes': 'In the last meeting, Lawrence expressed interest in knowing about trusts and wills for his family, and also increasing his 401k contribution. During our review this week, it was noted that one of the funds Lawrence is heavily invested in experienced a 2% decline in value over the past month.'
-        },
-        {
-            'name': 'Peter Galison', 
-            'email':'Lawrence@example.com',
-            'age': 64, 
-            'profession': 'Professor', 
-            'affiliation': 'Harvard University', 
-            'invested_assets': 130000, 
-            'last_contacted_days': 20, 
-            'details': 'Peter has been with The Fund for two years and he favors a conservative strategy that maximizes long term profits while avoiding risk.',
-            'meeting_notes': 'Peter was concerned about the current inflation rates and wanted to explore safer investment strategies. He also requested an update on his retirement plan projections.'
-        },
-        {
-            'name': 'Eric Maskin', 
-            'email':'Lawrence@example.com', 
-            'age': 35, 
-            'profession': 'Professor', 
-            'affiliation': 'Boston University',  
-            'invested_assets': 200000, 
-            'last_contacted_days': 10, 
-            'details': '',
-            'meeting_notes': 'Eric asked for an analysis of cryptocurrency investments. He is also considering increasing his contribution to his 401(k) plan next year.'
-        },
-        {
-            'name': 'Catherine Dulac', 
-            'email':'Lawrence@example.com',
-            'age': 42, 
-            'profession': 'Professor', 
-            'affiliation': 'Boston College', 
-            'invested_assets': 0, 
-            'last_contacted_days': 0, 
-            'details': '',
-            'meeting_notes': 'Catherine discussed opening a 529 college savings plan for her children. She also wants advice on balancing savings and student loans.'
-        },
-        {
-            'name': 'Gary King',
-            'email':'Lawrence@example.com', 
-            'age': 62, 
-            'profession': 'Professor', 
-            'affiliation': 'MIT', 
-            'invested_assets': 80000, 
-            'last_contacted_days': 50, 
-            'details': '',
-            'meeting_notes': 'Gary reviewed his current portfolio and discussed reallocating funds from stocks to bonds in anticipation of retirement in the next five years.'
-        }
-    ],
-    "Chicago": [
-        {
-            'name': 'John Doe', 
-            'email':'Lawrence@example.com',
-            'age': 55, 
-            'profession': 'Professor', 
-            'affiliation': 'Harvard University', 
-            'active_The Fund_member': True, 
-            'invested_assets': 180000, 
-            'last_contacted_days': 15, 
-            'details': '',
-            'meeting_notes': 'John expressed concern about the volatility in the tech sector and is considering shifting some assets to safer bonds. He also asked for updates on ESG (environmental, social, and governance) funds.'
-        }
-    ],
-}
-
-    try:
-        if city:
-            print("Fetching clients from", database.get(city, []))
-            return json.dumps(database.get(city, []))
-    except Exception as e:
-        print("Error fetching client data", str(e))
-        return json.dumps([])
 
 tools = [
     {
@@ -289,43 +206,63 @@ async def call_gpt4(message_history):
 
     return message
 
-current_client_name = ""
+
 message_history = []
 
 @app.post("/erase")
 async def erase_history(request: Request):
-    global current_client_name, message_history
+    global message_history, config
     data = await request.json()
     new_client_name = data.get("clientName")
+    new_industry = data.get("industry")
 
+### ---- HANDLING CLIENT NAME UPDATE HERE ---- ##
     if not new_client_name:
         return JSONResponse(
             status_code=400,
-            content={"error": "clientName is required"}
+            content={"error": "ClientName is required!!"}
         )
   # Update the client name
-    current_client_name = new_client_name
+# current_client_name = new_client_name
+    config.client_name = new_client_name
+
+### ---- HANDLING INDUSTRY TOGGLE HERE ---- ##
+    if new_industry:
+        try:
+            config.industry = Industry(new_industry)
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Invalid industry: {new_industry}. Must be 'real estate' or 'wam' only!!"}
+            )
   # Erase the message history
     message_history = []
-    print(f"History erased and client name updated to {current_client_name}")
+    print(f"History erased and configuration updated. Client name: {config.client_name}, Industry: {config.industry}")
     print("UPDATED HISTORY AFTER ERASING THE HISTORY", message_history)
 
 
     return JSONResponse(content={
         "message": "History erased and client name updated",
-        "clientName": current_client_name
+        "clientName": config.client_name,
+        "industry": config.industry
     })
 
 @app.post("/chat")
 async def chat(request: Request):
-    global current_client_name
+   
     # Function to update the system message with the new client name
-    def update_system_message(client_name):
+    def update_system_message():
+        industry_specific_content = ""
+        if config.industry == Industry.real_estate:
+            industry_specific_content = "Focus on real estate investment strategies and market trends."
+        elif config.industry == Industry.wam:
+            industry_specific_content = "Concentrate on wealth and asset management principles."
         return {
-        "role": "system",
-        "content": f"""You are Financial Advisor for {client_name}, a virtual assistant who specializes in performing research on clients, creating and sending emails to clients,
+            "role": "system",
+            "content": f"""You are Financial Advisor for {config.client_name}, a virtual assistant who specializes in performing research on clients, creating and sending emails to clients,
         and providing the user with helpful advice on what topics they should be discussing with their clients given relevant
         client characteristics like age, income level, available assets, planned retirement age, risk tolerance, etc.
+        {industry_specific_content}
         IMPORTANT INSTRUCTIONS TO ALWAYS FOLLOW:
         1. **Friendly and Personalized Communication**: Always respond in a warm, conversational tone. Use casual language, contractions, and even a touch of humor when appropriate. Imagine you're chatting with a colleague you know well.
         2. **Engage Personally**: Reference the user's previous messages or known information to make your responses feel more personalized and connected to the ongoing conversation.
@@ -381,8 +318,14 @@ async def chat(request: Request):
     print(f"User Message: {user_message}")
     print(f"Current client name: {client_name}")
 
+     # Update config if a new client name is provided
+    if client_name and client_name != config.client_name:
+        config.client_name = client_name
+        print(f"Updated client name in config: {config.client_name}")
+
+
      # Create or update the system message with the current client name
-    system_message = update_system_message(client_name)
+    system_message = update_system_message()
     print(f"Updated System Message: {system_message}")
 
     message_history = data.get("message_history",[])
@@ -413,7 +356,7 @@ async def chat(request: Request):
             return JSONResponse(content={
                 "response": message.content, 
                 "message_history": message_history,
-                "clientName": client_name 
+                "clientName": config.client_name 
                 })
         cur_iter += 1
 
