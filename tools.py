@@ -159,7 +159,7 @@ def get_funds(risk_level: str, min_rating: int, max_expense_ratio: float, estima
             'risk_level': 'Moderate',
             'total_return_ytd': 15.72,
             'expense_ratio': 0.0044,
-            'minimum_investment': 250000
+            'minimum_investment': 25000
         },
         {
             'name': 'US Large Cap Value Fund', 
