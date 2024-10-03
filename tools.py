@@ -18,8 +18,10 @@ def get_clients(city: str = None) -> str:
             'profession': 'Professor', 
             'affiliation': 'Harvard University',  
             'invested_assets': 180000, 
-            'last_contacted_days': 15, 
-            'details': 'Lawrence appears to be 3 years from retirement and is estimated to have $40k in investable assets that are not invested in The Fund. Lawrence has been with The Fund for over three years and favors an high risk profile and passive management. Of the assets with The Fund, they appear to draw from a broad array of fund managers, including both The Fund-affiliated and outside funds. However, his current investment mix is stock-heavy, which may pose a risk at his age. It is recommended that Lawrence switch to a more bond-heavy investment strategy to better align with his risk tolerance and nearing retirement.',
+            'last_contacted_days': 15,
+            'risk_profile': 'Low',
+            'estimated_available_funds': 40000, 
+            'details': 'Lawrence appears to be 3 years from retirement and is estimated to have $40k in investable assets that are not invested in The Fund. Lawrence has been with The Fund for over three years and favors a low risk profile and passive management. Of the assets with The Fund, they appear to draw from a broad array of fund managers, including both The Fund-affiliated and outside funds. However, his current investment mix is stock-heavy, which may pose a risk at his age. It is recommended that Lawrence switch to a more bond-heavy investment strategy to better align with his low tolerance and nearing retirement.',
             'meeting_notes': 'In the last meeting, Lawrence expressed interest in knowing about trusts and wills for his family, and also increasing his 401k contribution. During our review this week, it was noted that one of the funds Lawrence is heavily invested in experienced a 2% decline in value over the past month.'
         },
         {
@@ -30,6 +32,8 @@ def get_clients(city: str = None) -> str:
             'affiliation': 'Harvard University', 
             'invested_assets': 130000, 
             'last_contacted_days': 20, 
+            'risk_profile': 'Low',
+            'estimated_available_funds': 10000,
             'details': 'Peter has been with The Fund for two years and he favors a conservative strategy that maximizes long term profits while avoiding risk.',
             'meeting_notes': 'Peter was concerned about the current inflation rates and wanted to explore safer investment strategies. He also requested an update on his retirement plan projections.'
         },
@@ -41,6 +45,8 @@ def get_clients(city: str = None) -> str:
             'affiliation': 'Boston University',  
             'invested_assets': 200000, 
             'last_contacted_days': 10, 
+            'risk_profile': 'High',
+            'estimated_available_funds': 200000,
             'details': '',
             'meeting_notes': 'Eric asked for an analysis of cryptocurrency investments. He is also considering increasing his contribution to his 401(k) plan next year.'
         },
@@ -52,6 +58,8 @@ def get_clients(city: str = None) -> str:
             'affiliation': 'Boston College', 
             'invested_assets': 0, 
             'last_contacted_days': 0, 
+            'risk_profile': 'Moderate',
+            'estimated_available_funds': 1000,
             'details': '',
             'meeting_notes': 'Catherine discussed opening a 529 college savings plan for her children. She also wants advice on balancing savings and student loans.'
         },
@@ -63,6 +71,8 @@ def get_clients(city: str = None) -> str:
             'affiliation': 'MIT', 
             'invested_assets': 80000, 
             'last_contacted_days': 50, 
+            'risk_profile': 'Moderate',
+            'estimated_available_funds': 5000,
             'details': '',
             'meeting_notes': 'Gary reviewed his current portfolio and discussed reallocating funds from stocks to bonds in anticipation of retirement in the next five years.'
         }
@@ -138,7 +148,7 @@ def send_email_gmail(recipient_email: str, subject: str, body: str) -> str:
         return error_message
     
 
-def get_funds(criteria: dict = None) -> str:
+def get_funds(risk_level: str, min_rating: int, max_expense_ratio: float, estimated_available_funds: int) -> str:
     """Retrieve funds based on given criteria"""
     database = [
         {
@@ -148,7 +158,7 @@ def get_funds(criteria: dict = None) -> str:
             'morningstar_rating': 4,
             'risk_level': 'Moderate',
             'total_return_ytd': 15.72,
-            'expense_ratio': 0.85,
+            'expense_ratio': 0.0044,
             'minimum_investment': 250000
         },
         {
@@ -158,7 +168,7 @@ def get_funds(criteria: dict = None) -> str:
             'morningstar_rating': 5,
             'risk_level': 'Low',
             'total_return_ytd': 9.34,
-            'expense_ratio': 0.68,
+            'expense_ratio': 0.0005,
             'minimum_investment': 2500
         },
         {
@@ -166,9 +176,9 @@ def get_funds(criteria: dict = None) -> str:
             'ticker': 'EMBFX',
             'category': 'Emerging Markets Bond', 
             'morningstar_rating': 3,
-            'risk_level': 'High',
+            'risk_level': 'Low',
             'total_return_ytd': 6.21,
-            'expense_ratio': 0.95,
+            'expense_ratio': 0.0004,
             'minimum_investment': 10000
         },
         {
@@ -178,7 +188,7 @@ def get_funds(criteria: dict = None) -> str:
             'morningstar_rating': 4,
             'risk_level': 'High',
             'total_return_ytd': 22.51,
-            'expense_ratio': 1.05,
+            'expense_ratio': 0.0012,
             'minimum_investment': 5000
         },
         {
@@ -188,21 +198,16 @@ def get_funds(criteria: dict = None) -> str:
             'morningstar_rating': 5,
             'risk_level': 'Moderate',
             'total_return_ytd': 18.63,
-            'expense_ratio': 1.15,
+            'expense_ratio': 0.0011,
             'minimum_investment': 1000
         }
     ]
 
-    if criteria:
-        filtered_funds = database
-        if 'risk_level' in criteria:
-            filtered_funds = [fund for fund in filtered_funds if fund['risk_level'] == criteria['risk_level']]
-        if 'min_rating' in criteria:
-            filtered_funds = [fund for fund in filtered_funds if fund['morningstar_rating'] >= criteria['min_rating']]
-        if 'max_expense_ratio' in criteria:
-            filtered_funds = [fund for fund in filtered_funds if fund['expense_ratio'] <= criteria['max_expense_ratio']]
-        if 'max_investment' in criteria:
-            filtered_funds = [fund for fund in filtered_funds if fund['minimum_investment'] <= criteria['max_investment']]
-        return json.dumps(filtered_funds)
-    else:
-        return json.dumps(database)
+    filtered_funds = database
+    filtered_funds = [fund for fund in filtered_funds if fund['risk_level'] == risk_level]
+    filtered_funds = [fund for fund in filtered_funds if fund['morningstar_rating'] >= min_rating]
+    filtered_funds = [fund for fund in filtered_funds if fund['expense_ratio'] <= max_expense_ratio]
+    filtered_funds = [fund for fund in filtered_funds if fund['minimum_investment'] <= estimated_available_funds]
+    print('====================================')
+    print('list of funds: ', filtered_funds)
+    return json.dumps(filtered_funds)

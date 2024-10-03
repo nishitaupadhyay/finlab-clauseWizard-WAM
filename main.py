@@ -104,10 +104,10 @@ b. If the user asks about a specific client, provide their additional details.
     review these topics. Do not repeat them verbatim.
 
 7. When the user asks for fund recommendations for a client:
-    b. Based on the client's profile (age, risk tolerance, invested assets, etc.), determine appropriate criteria for fund selection.
-    c. Use the get_funds tool to fetch fund recommendations based on these criteria.
-    d. Suggest only funds from the list returned by the get_funds tool.
-    e. Explain why these funds are suitable for the client's profile.
+    a. Based on the client's profile (age, risk tolerance, invested assets, etc.), determine appropriate criteria for fund selection.
+    b. Use the get_funds tool to fetch fund recommendations based on these criteria. The default 'max_expense_ratio' should be 0.001 and the default 'min_rating' should be 3.
+    c. Suggest only funds from the list returned by the get_funds tool.
+    d. Explain why these funds are suitable for the client's profile.
 Remember, your goal is to be helpful and informative while also being approachable and relatable. Make the user feel like they're talking to a knowledgeable friend rather than a formal financial institution.
 """
 
@@ -196,11 +196,12 @@ tools = [
                         "type": "number",
                         "description": "The maximum expense ratio of the fund",
                     },
-                    "max_investment": {
+                    "estimated_available_funds": {
                         "type": "number",
-                        "description": "The maximum minimum investment amount for the fund",
+                        "description": "The estimated amount of cash that the client has available to be invested.",
                     },
                 },
+                "required": ["risk_level", "min_rating", "max_expense_ratio", "estimated_available_funds"],
             },
         },
     },
@@ -222,7 +223,12 @@ async def call_tool(tool_call):
             body=arguments.get("body"),
         )
     elif function_name == "get_funds":
-        return get_funds(criteria=arguments)
+        return get_funds(
+            risk_level=arguments.get("risk_level"),
+            min_rating=arguments.get("min_rating"),
+            max_expense_ratio=arguments.get("max_expense_ratio"),
+            estimated_available_funds=arguments.get("estimated_available_funds"),
+        )
 
 async def call_gpt4(message_history):
     settings = {
@@ -237,8 +243,8 @@ async def call_gpt4(message_history):
     )
 
     message = response.choices[0].message
-    print("=======RESPONSE IS THISSSS====", message)
-    print("=======RESPONSE CONTENT  IS THISSSS====", message.content)
+    # print("=======RESPONSE IS THISSSS====", message)
+    # print("=======RESPONSE CONTENT  IS THISSSS====", message.content)
 
     for tool_call in message.tool_calls or []:
         if tool_call.type == "function":
@@ -326,7 +332,7 @@ async def chat(request: Request):
 
      # Create or update the system message with the current client name
     system_message = update_system_message()
-    print(f"Updated System Message: {system_message}")
+    # print(f"Updated System Message: {system_message}")
 
     message_history = data.get("message_history",[])
 
@@ -341,8 +347,8 @@ async def chat(request: Request):
 
 
 
-    print("THIS IS THE MESSAGE HISTORY", message_history)
-    print("this is the client name in the sustem message", client_name)
+    # print("THIS IS THE MESSAGE HISTORY", message_history)
+    # print("this is the client name in the sustem message", client_name)
 
     message_history.append({"role": "user", "content": user_message})
 
