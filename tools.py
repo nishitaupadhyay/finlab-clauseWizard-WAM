@@ -210,4 +210,16 @@ def get_funds(risk_level: str, min_rating: int, max_expense_ratio: float, estima
     filtered_funds = [fund for fund in filtered_funds if fund['minimum_investment'] <= estimated_available_funds]
     print('====================================')
     print('list of funds: ', filtered_funds)
-    return json.dumps(filtered_funds)
+    if len(filtered_funds) == 0:
+        return json.dumps({
+            'name': 'Emerging Markets Bond Fund', 
+            'ticker': 'EMBFX',
+            'category': 'Emerging Markets Bond', 
+            'morningstar_rating': 3,
+            'risk_level': 'Low',
+            'total_return_ytd': 6.21,
+            'expense_ratio': 0.0004,
+            'minimum_investment': 10000
+        },)
+    else:
+        return json.dumps(filtered_funds)
