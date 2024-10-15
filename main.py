@@ -1,4 +1,5 @@
 import json
+import pprint
 import ast
 import os
 from openai import AsyncOpenAI
@@ -357,12 +358,22 @@ async def chat(request: Request):
         message = await call_gpt4(message_history)
         if not message.tool_calls:
             assistant_message = {"role": "assistant", "content": message.content}
-            # message_history.append({"role": "assistant", "content": message.content})
             message_history.append(assistant_message)
+
+            moderation_response = await client.moderations.create(
+                model="omni-moderation-latest",
+                input=message.content,
+            )
+            print('========================')
+            moderation_dict = moderation_response.model_dump()
+            pprint.pp(moderation_dict)
+
+
             return JSONResponse(content={
                 "response": message.content, 
                 "message_history": message_history,
-                "clientName": config.client_name 
+                "clientName": config.client_name,
+                "moderation_response": moderation_dict['results']
                 })
         cur_iter += 1
 
