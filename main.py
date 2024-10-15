@@ -362,7 +362,7 @@ async def chat(request: Request):
 
             moderation_response = await client.moderations.create(
                 model="omni-moderation-latest",
-                input=message.content,
+                input=user_message,
             )
             print('========================')
             moderation_dict = moderation_response.model_dump()
