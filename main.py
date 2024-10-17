@@ -4,8 +4,7 @@ import os
 from openai import AsyncOpenAI
 from enum import Enum
 from dotenv import load_dotenv, find_dotenv
-
-from fastapi import FastAPI, APIRouter, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -15,9 +14,22 @@ from pydantic import BaseModel
 from tools import get_clients, get_funds, send_email_gmail
 
 
-load_dotenv(find_dotenv())
 
+from langchain_community.vectorstores import Chroma
+from langchain_openai import OpenAIEmbeddings
+
+import sqlalchemy
+from sqlalchemy import create_engine, MetaData, Table, Column, String
+from databases import Database
+
+
+
+
+        
 app = FastAPI()
+load_dotenv()  # This loads the variables from .env
+
+
 
 class Industry(str, Enum):
     real_estate = "real estate"
@@ -27,6 +39,7 @@ class Config(BaseModel):
     industry: Industry = Industry.wam
     client_name: str = 'TIAA'
     model: str = 'gpt-4o'
+    
 
 config = Config()
 
@@ -38,8 +51,11 @@ llm_config = {
     "base_url": os.environ["OPENAI_BASE_URL"],
     "temperature": 0,
     "timeout": 120,
-    "cache_seed": None
+    "cache_seed": None,
+
 }
+
+print("key", OPENAI_API_KEY)
 
 client = AsyncOpenAI()
 
@@ -61,6 +77,60 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+import shutil
+
+
+# PostgreSQL credentials from .env
+DB_USER = os.getenv('DB_USER')
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
+
+print("port", DB_PORT)
+
+# Construct the DATABASE URL
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+print("++++++++++++++DATABASE URL++++++++++",DATABASE_URL)
+
+# Initialize the database and metadata
+database = Database(DATABASE_URL)
+metadata = MetaData()
+
+# Define the users table schema
+user = Table(
+    "user",
+    metadata,
+    Column("userid", String, primary_key=True),
+    Column("name", String),
+)
+
+
+# Initialize Chroma DB
+persist_directory = "./chromadb/financial-client-data"
+collection_name = "financial-client-data"
+try:
+    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=os.environ.get("OPENAI_API_KEY"))
+    db = Chroma(persist_directory=persist_directory, embedding_function=embeddings, collection_name=collection_name)
+    print(f"Successfully initialized Chroma DB at {persist_directory}")
+except Exception as e:
+    print(f"Error initializing Chroma DB: {str(e)}")
+    print("Attempting to recreate the database...")
+    
+    # Remove the existing directory
+    if os.path.exists(persist_directory):
+        shutil.rmtree(persist_directory)
+    
+    # Try to create the database again
+    try:
+        db = Chroma(persist_directory=persist_directory, embedding_function=embeddings, collection_name=collection_name)
+        print(f"Successfully recreated Chroma DB at {persist_directory}")
+    except Exception as e:
+        print(f"Failed to recreate Chroma DB: {str(e)}")
+        print("Please check your Chroma and LangChain installations, and ensure your OpenAI API key is correct.")
+        raise
+
 
 SYSTEM_MESSAGE = """You are Financial Advisor for {client_name}, a virtual assistant who specializes in performing research on clients, creating and sending emails to clients,
 and providing the user with helpful advice on what topics they should be discussing with their clients given relevant
@@ -113,24 +183,6 @@ Remember, your goal is to be helpful and informative while also being approachab
 
 
 tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_current_weather",
-            "description": "Get the current weather in a given location",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "location": {
-                        "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA",
-                    },
-                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
-                },
-                "required": ["location"],
-            },
-        },
-    },
     {
         "type": "function",
         "function": {
@@ -259,52 +311,14 @@ async def call_gpt4(message_history):
             )
 
     return message
+from langchain.memory import ConversationBufferMemory
 
-
-message_history = []
-
-@app.post("/erase")
-async def erase_history(request: Request):
-    global message_history, config
-    data = await request.json()
-    new_client_name = data.get("clientName")
-    new_industry = data.get("industry")
-
-### ---- HANDLING CLIENT NAME UPDATE HERE ---- ##
-    if not new_client_name:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "ClientName is required!!"}
-        )
-  # Update the client name
-# current_client_name = new_client_name
-    config.client_name = new_client_name
-
-### ---- HANDLING INDUSTRY TOGGLE HERE ---- ##
-    if new_industry:
-        try:
-            config.industry = Industry(new_industry)
-        except ValueError:
-            return JSONResponse(
-                status_code=400,
-                content={"error": f"Invalid industry: {new_industry}. Must be 'real estate' or 'wam' only!!"}
-            )
-  # Erase the message history
-    message_history = []
-    print(f"History erased and configuration updated. Client name: {config.client_name}, Industry: {config.industry}")
-    print("UPDATED HISTORY AFTER ERASING THE HISTORY", message_history)
-
-
-    return JSONResponse(content={
-        "message": "History erased and client name updated",
-        "clientName": config.client_name,
-        "industry": config.industry
-    })
+# Initialize the conversation buffer memory
+memory = ConversationBufferMemory(return_messages=True)
 
 @app.post("/chat")
 async def chat(request: Request):
-   
-    # Function to update the system message with the new client name
+    # Update the system message with the new client name
     def update_system_message():
         industry_specific_content = ""
         if config.industry == Industry.real_estate:
@@ -314,42 +328,32 @@ async def chat(request: Request):
         return {
             "role": "system",
             "content": SYSTEM_MESSAGE.format(client_name=config.client_name, industry_specific_content=industry_specific_content)
+        }
 
-    }
     data = await request.json()
     user_message = data.get("message", "")
     client_name = data.get("clientName", "")
 
-
     print(f"User Message: {user_message}")
     print(f"Current client name: {client_name}")
 
-     # Update config if a new client name is provided
+    # Update config if a new client name is provided
     if client_name and client_name != config.client_name:
         config.client_name = client_name
         print(f"Updated client name in config: {config.client_name}")
 
-
-     # Create or update the system message with the current client name
+    # Create or update the system message with the current client name
     system_message = update_system_message()
-    # print(f"Updated System Message: {system_message}")
+    message_history = memory.load_memory_variables({}).get("history", [])
 
-    message_history = data.get("message_history",[])
+     # Check if the memory is empty and add the system message if needed
+    if not message_history:
+        print("Adding system message as the first message.")
+        memory.chat_memory.add_message(system_message)
+        message_history = [system_message]  # Ensure the system message is part of history
 
-
-      # Check if the first message in history is already the system message
-    if not message_history or message_history[0].get("role") != "system":
-        # If there is already a system message, update its content
-        message_history.insert(0, system_message)  # Insert the correct client name                    
-    else:
-        # If there's already a system message, update it to ensure it's current
-        message_history[0] = system_message
-
-
-
-    # print("THIS IS THE MESSAGE HISTORY", message_history)
-    # print("this is the client name in the sustem message", client_name)
-
+    # Add the user message to the memory and update the history
+    memory.chat_memory.add_message({"role": "user", "content": user_message})
     message_history.append({"role": "user", "content": user_message})
 
     cur_iter = 0
@@ -361,11 +365,9 @@ async def chat(request: Request):
             message_history.append(assistant_message)
             return JSONResponse(content={
                 "response": message.content, 
-                "message_history": message_history,
                 "clientName": config.client_name 
                 })
-        cur_iter += 1
-
+                
     return JSONResponse(content={"error": "Maximum iterations reached"})
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
