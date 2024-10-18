@@ -1,0 +1,34 @@
+{
+  "default_fund": {
+    "name": "Emerging Markets Bond Fund",
+    "ticker": "EMBFX",
+    "category": "Emerging Markets Bond",
+    "morningstar_rating": 3,
+    "risk_level": "Low",
+    "total_return_ytd": 6.21,
+    "expense_ratio": 0.0004,
+    "minimum_investment": 10000
+  },
+  "funds": [
+    {
+      "name": "Global Growth Fund",
+      "ticker": "GLGFX",
+      "category": "Global Large-Stock Growth",
+      "morningstar_rating": 4,
+      "risk_level": "Moderate",
+      "total_return_ytd": 15.72,
+      "expense_ratio": 0.0044,
+      "minimum_investment": 25000
+    },
+    {
+      "name": "US Large Cap Value Fund",
+      "ticker": "USLVX",
+      "category": "Large Value",
+      "morningstar_rating": 5,
+      "risk_level": "Low",
+      "total_return_ytd": 9.34,
+      "expense_ratio": 0.0005,
+      "minimum_investment": 2500
+    }
+  ]
+}
