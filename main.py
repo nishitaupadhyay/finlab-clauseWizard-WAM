@@ -5,7 +5,7 @@ from openai import AsyncOpenAI
 from enum import Enum
 from dotenv import load_dotenv, find_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -259,58 +259,93 @@ tools = [
     },
 ]
 
+import ast
+
 async def call_tool(tool_call):
     function_name = tool_call.function.name
-    arguments = ast.literal_eval(tool_call.function.arguments)
 
-    print('function name', function_name)
-    print('arguments: ', arguments)
+    # Handle the case where arguments might be empty
+    try:
+        arguments = ast.literal_eval(tool_call.function.arguments or '{}')
+        print('Parsed arguments: ', arguments)
+    except (SyntaxError, ValueError) as e:
+        print(f"Error parsing arguments with ast.literal_eval: {e}")
+        arguments = {}
+
+    print('Function name:', function_name)
+    print('Arguments:', arguments)
 
     if function_name == "get_clients":
-        return get_clients(city=arguments.get("city"))
-    elif function_name == "send_email_gmail":
-        return send_email_gmail(
-            recipient_email=arguments.get("recipient_email"),
-            subject=arguments.get("subject"),
-            body=arguments.get("body"),
-        )
-    elif function_name == "get_funds":
-        return get_funds(
-            risk_level=arguments.get("risk_level"),
-            min_rating=arguments.get("min_rating"),
-            max_expense_ratio=arguments.get("max_expense_ratio"),
-            estimated_available_funds=arguments.get("estimated_available_funds"),
-        )
+        city = arguments.get("city")
+        print(f"Calling get_clients with city: {city}")
+        return await get_clients(city=city)
+    
+    # Handle other tools here if needed
+    else:
+        print(f"Tool {function_name} not recognized")
+        return None
 
-async def call_gpt4(message_history):
-    settings = {
-        "model": "gpt-4o",
-        "tools": tools,
-        "tool_choice": "auto",
-       
-    }
-
+async def generate_streaming_response(messages):
+    print("Starting generate_streaming_response...")  # Start of function
     response = await client.chat.completions.create(
-        messages=message_history, **settings
+        model="gpt-4o",
+        messages=messages,
+        tools=tools,
+        stream=True,
+        tool_choice="auto",
     )
 
-    message = response.choices[0].message
-    # print("=======RESPONSE IS THISSSS====", message)
-    # print("=======RESPONSE CONTENT  IS THISSSS====", message.content)
+    print("Response received from chat.completions.create...")
 
-    for tool_call in message.tool_calls or []:
-        if tool_call.type == "function":
-            function_response = await call_tool(tool_call)
-            message_history.append(
-                {
-                    "role": "function",
-                    "name": tool_call.function.name,
-                    "content": function_response,
-                    "tool_call_id": tool_call.id,
-                }
+    final_response = ""  # To collect the entire response
+
+    async for chunk in response:
+        print("Processing response chunk...")
+
+        if chunk.choices[0].delta.content:
+            print("Yielding content: ", chunk.choices[0].delta.content)
+            final_response += chunk.choices[0].delta.content  # Collecting response
+            yield f"data: {chunk.choices[0].delta.content}\n\n"
+
+        elif chunk.choices[0].delta.tool_calls:
+            tool_call = chunk.choices[0].delta.tool_calls[0]
+            print(f"Tool call detected, calling tool...")
+
+            # Use call_tool function to handle tool calls
+            tool_result = await call_tool(tool_call)
+            print(f"Tool result: {tool_result}")
+
+            # Add the tool result to the conversation
+            messages.append({
+                "role": "function",
+                "name": tool_call.function.name,
+                "content": tool_result
+            })
+            print(f"Tool call result appended to messages. Current messages: {messages}")
+            final_response += f"[Tool Call] {tool_call.function.name}: {tool_result}\n"  # Collecting response
+            yield f"data: [Tool Call] {tool_call.function.name}: {tool_result}\n\n"
+
+            # After tool call, continue the conversation
+            print("Continuing conversation after tool call...")
+            follow_up_response = await client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages,
+                stream=True
             )
+            print("Follow-up response received.")
 
-    return message
+            async for follow_up_chunk in follow_up_response:
+                print("Processing follow-up response chunk...")
+
+                if follow_up_chunk.choices[0].delta.content:
+                    print(f"Yielding follow-up content: {follow_up_chunk.choices[0].delta.content}")
+                    final_response += follow_up_chunk.choices[0].delta.content  # Collecting response
+                    yield f"data: {follow_up_chunk.choices[0].delta.content}\n\n"
+
+    print("Finished processing generate_streaming_response.")
+    print(f"Final accumulated response:\n{final_response}")  # Print the final accumulated response
+
+
 from langchain.memory import ConversationBufferMemory
 
 # Initialize the conversation buffer memory
@@ -356,19 +391,10 @@ async def chat(request: Request):
     memory.chat_memory.add_message({"role": "user", "content": user_message})
     message_history.append({"role": "user", "content": user_message})
 
-    cur_iter = 0
-    while cur_iter < MAX_ITER:
-        message = await call_gpt4(message_history)
-        if not message.tool_calls:
-            assistant_message = {"role": "assistant", "content": message.content}
-            # message_history.append({"role": "assistant", "content": message.content})
-            message_history.append(assistant_message)
-            return JSONResponse(content={
-                "response": message.content, 
-                "clientName": config.client_name 
-                })
-                
-    return JSONResponse(content={"error": "Maximum iterations reached"})
+    return StreamingResponse(
+        generate_streaming_response(message_history),
+        media_type="text/event-stream"
+    )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
